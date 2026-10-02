@@ -90,8 +90,27 @@
 
 .diffControls {
 	display: flex;
+	align-items: center;
 	margin-inline-start: auto;
 	gap: 6px;
+}
+
+.diffControlsToolbar {
+	display: flex;
+	gap: 6px;
+}
+
+/* Where the header's toolbar row takes the diff's controls. */
+.toolbarEnd {
+	display: flex;
+	min-width: 0;
+	margin-inline-start: auto;
+}
+
+/* Stands in for the controls' bar once they move up into the header, so the
+   first file card still starts the diff's file spacing below the header. */
+.diffTopGap {
+	height: var(--diff-file-top);
 }
 
 .panel {
@@ -272,6 +291,21 @@
 .tabsRow {
 	display: flex;
 	column-gap: 12px;
+	align-items: center;
+}
+
+/* Under the branch name, close to it, and further from the toolbar below. */
+.branchMeta {
+	margin-block: -4px 4px;
+	overflow: hidden;
+	color: var(--text-3);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.titleRowEnd {
+	flex-shrink: 0;
+	margin-inline-start: auto;
 }
 
 .tabsRowRight {

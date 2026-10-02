@@ -3,8 +3,16 @@ import { forgeAuthFailure, forgeDestination, isCloudForge } from "#ui/forge.ts";
 import { ForgeAuthPrompt } from "./ForgeAuthPrompt.tsx";
 import { ResizeHandle } from "@gitbutler/ui-react/ResizeHandle.tsx";
 import { TextLink } from "@gitbutler/ui-react/TextLink.tsx";
-import { startAbsorb, setCursor, useCanShowFiles, useSelection } from "#ui/use-cursor.ts";
+import {
+	sidebarFocusScopeOf,
+	startAbsorb,
+	setCursor,
+	useCanShowFiles,
+	useSelection,
+} from "#ui/use-cursor.ts";
 import { FileList } from "@gitbutler/ui-react/FileList.tsx";
+import { createPortal } from "react-dom";
+import type { AggregateCIChecks } from "#ui/ci.ts";
 import { SuspenseQuery } from "@suspensive/react-query";
 import {
 	type PushBeforePublish,
@@ -32,6 +40,7 @@ import {
 	getReviewQueryOptions,
 	guiSettingsQueryOptions,
 	headInfoQueryOptions,
+	listCIChecksQueryOptions,
 	listEditorsQueryOptions,
 	listReviewsQueryOptions,
 	newReviewTargetQueryOptions,
@@ -73,7 +82,9 @@ import type { BranchTab, CheckableAddress } from "#ui/projects/project.ts";
 import { projectSlice } from "#ui/projects/state.ts";
 import { interfaceSlice } from "#ui/interface/state.ts";
 import { Badge } from "@gitbutler/ui-react/Badge.tsx";
-import { Button, getButtonClassName } from "@gitbutler/ui-react/Button.tsx";
+import { DiffStats } from "@gitbutler/ui-react/DiffStats.tsx";
+import { DropdownButton } from "@gitbutler/ui-react/DropdownButton.tsx";
+import { Button } from "@gitbutler/ui-react/Button.tsx";
 import { Icon } from "@gitbutler/ui-react/Icon.tsx";
 import { Tooltip } from "@gitbutler/ui-react/Tooltip.tsx";
 import { useCopied } from "#ui/components/useCopied.ts";
@@ -146,6 +157,7 @@ import { ChangeStats } from "#ui/routes/project/$id/workspace/ChangeStats.tsx";
 import { DiffFileHeader as UIDiffFileHeader } from "@gitbutler/ui-react/DiffFileHeader.tsx";
 import { useChangesMenuItems } from "#ui/routes/project/$id/workspace/useChangesMenuItems.ts";
 import {
+	describeLineStats,
 	getLineStats,
 	patchLineStats,
 	type LineStats,
@@ -178,7 +190,11 @@ import {
 	type HunkLineSelection,
 	wholeHunkSelectionByLine,
 } from "#ui/hunk.ts";
-import { showNativeContextMenu, showNativeMenuFromTrigger } from "#ui/native-menu.ts";
+import {
+	nativeMenuItem,
+	showNativeContextMenu,
+	showNativeMenuFromTrigger,
+} from "#ui/native-menu.ts";
 import { useFileMenuItems } from "#ui/routes/project/$id/workspace/useFileMenuItems.ts";
 import { useMergedRefs } from "@base-ui/utils/useMergedRefs";
 import { getHeadInfoIndex, recordedPullRequest } from "#ui/api/ref-info.ts";
@@ -2069,11 +2085,24 @@ const DiffFileHeader: FC<DiffFileHeaderProps> = (p) => {
 	);
 };
 
-const FilesToggle: FC<{ projectId: string }> = ({ projectId }) => {
+/**
+ * Shows and hides the files panel, and carries the change's file count and line totals in both
+ * states, so the button keeps its width and only its icon says which state it is in.
+ */
+const FilesToggle: FC<{ projectId: string; fileCount: number; lineStats: LineStats }> = ({
+	projectId,
+	fileCount,
+	lineStats,
+}) => {
 	const dispatch = useAppDispatch();
 	const filesVisible = useAppSelector((state) =>
 		projectSlice.selectors.selectFilesVisible(state, projectId),
 	);
+	const label = [
+		workspaceHotkeys.toggleFiles.meta.name,
+		`${fileCount} ${fileCount === 1 ? "file" : "files"} changed`,
+		...describeLineStats(lineStats),
+	].join(", ");
 
 	return (
 		<Tooltip
@@ -2081,15 +2110,56 @@ const FilesToggle: FC<{ projectId: string }> = ({ projectId }) => {
 			kbd={workspaceHotkeys.toggleFiles.hotkey}
 		>
 			<Button
-				iconOnly
-				variant="ghost"
-				aria-label={workspaceHotkeys.toggleFiles.meta.name}
+				aria-label={label}
 				aria-pressed={filesVisible}
 				onClick={() => dispatch(projectSlice.actions.toggleFiles({ projectId }))}
 			>
 				{filesVisible ? <Icon name="files-sidebar" /> : <Icon name="sidebar-narrow" />}
+				<Badge variant="lightGray">{fileCount}</Badge>
+				<DiffStats
+					added={lineStats.linesAdded}
+					removed={lineStats.linesRemoved}
+					className="text-12"
+				/>
 			</Button>
 		</Tooltip>
+	);
+};
+
+/**
+ * Review hides the sidebar so the change has the whole window, the same mode the sidebar
+ * shortcut toggles; its menu marks every file reviewed at once.
+ */
+const ReviewButton: FC<{
+	allFilesReviewed: boolean;
+	canMarkAll: boolean;
+	onToggleAllReviewed: () => void;
+}> = ({ allFilesReviewed, canMarkAll, onToggleAllReviewed }) => {
+	const dispatch = useAppDispatch();
+	const fullWindow = useAppSelector(interfaceSlice.selectors.selectDetailsFullWindow);
+
+	const toggle = () => {
+		dispatch(interfaceSlice.actions.setDetailsFullWindow({ fullWindow: !fullWindow }));
+		const sidebarFocusScope = sidebarFocusScopeOf();
+		requestAnimationFrame(() => focusScope(fullWindow ? sidebarFocusScope : "diff"));
+	};
+
+	return (
+		<DropdownButton
+			menuLabel="Review options"
+			onClick={toggle}
+			onMenuTrigger={(trigger) => {
+				void showNativeMenuFromTrigger(trigger, [
+					nativeMenuItem({
+						label: allFilesReviewed ? "Mark all unreviewed" : "Mark all reviewed",
+						enabled: canMarkAll,
+						onSelect: onToggleAllReviewed,
+					}),
+				]);
+			}}
+		>
+			{fullWindow ? "Exit review" : "Review"}
+		</DropdownButton>
 	);
 };
 
@@ -2218,6 +2288,11 @@ const Diff: FC<{
 	pendingFileRef: RefObject<FileAddress | null>;
 	headerSlot?: ReactNode;
 	/**
+	 * Where the header wants the diff's controls, in its own toolbar row. Left out, the controls
+	 * sit in a bar above the diff; `null` while the header's row is still mounting.
+	 */
+	toolbarTarget?: HTMLElement | null;
+	/**
 	 * Whether this scope may have a files panel at all. Its caller knows, and the
 	 * URL no longer does: the pane can be driven by a list the `active` param is
 	 * not naming.
@@ -2239,6 +2314,7 @@ const Diff: FC<{
 	didScrollToViaFileRef,
 	pendingFileRef,
 	headerSlot,
+	toolbarTarget,
 }) => {
 	const focusScopeRef = useRef<HTMLDivElement>(null);
 	const dispatch = useAppDispatch();
@@ -2275,10 +2351,10 @@ const Diff: FC<{
 
 	const detailsFullWindow = useAppSelector(interfaceSlice.selectors.selectDetailsFullWindow);
 
-	// Change stats live in the files panel, or — in the uncommitted scope, which has no files
-	// panel — in the sidebar's "Uncommitted" row. Surface them in the toolbar below whenever
-	// whichever of those owns them is hidden, so they never disappear entirely.
-	const statsShownElsewhere = canShowFiles ? filesVisible : !detailsFullWindow;
+	// Where there is a files panel its toggle carries the change stats. The uncommitted scope has
+	// none: its stats live in the sidebar's "Uncommitted" row, so the toolbar shows them once the
+	// sidebar is hidden.
+	const statsShownElsewhere = canShowFiles || !detailsFullWindow;
 
 	const filesFilter = useAppSelector((state) =>
 		projectSlice.selectors.selectFilesFilter(state, projectId),
@@ -2626,10 +2702,7 @@ const Diff: FC<{
 			<div className={styles.filesPanelContent} ref={filesPanelRef}>
 				<FileList
 					className={styles.diffFiles}
-					title="Changes"
-					count={changes.length}
-					added={lineStats.linesAdded}
-					removed={lineStats.linesRemoved}
+					title="Changed files"
 					onOpenFilter={fileFilter.open}
 					filter={
 						fileFilter.rowProps && {
@@ -2676,6 +2749,55 @@ const Diff: FC<{
 		</Panel>
 	) : null;
 
+	const controls = (
+		<div className={styles.diffControls}>
+			{canShowFiles && (
+				<FilesToggle projectId={projectId} fileCount={changes.length} lineStats={lineStats} />
+			)}
+
+			<Toolbar.Root aria-label="Diff controls" className={styles.diffControlsToolbar}>
+				<ToggleGroupStyles>
+					<Toolbar.Button
+						render={
+							<DiffOverflowToggle render={<ToggleStyles iconOnly />}>
+								<Icon name="text-wrap" />
+							</DiffOverflowToggle>
+						}
+					/>
+					<Toolbar.Button
+						render={
+							<DiffBackgroundsToggle render={<ToggleStyles iconOnly />}>
+								<Icon name="text-block" />
+							</DiffBackgroundsToggle>
+						}
+					/>
+				</ToggleGroupStyles>
+				{canUseSplitDiff && (
+					<DiffStyleToggleGroup render={<ToggleGroupStyles />}>
+						<Toolbar.Button
+							render={<Toggle render={<ToggleStyles />} />}
+							value={"split" satisfies GUISettings["diffStyle"]}
+						>
+							Split
+						</Toolbar.Button>
+						<Toolbar.Button
+							render={<Toggle render={<ToggleStyles />} />}
+							value={"unified" satisfies GUISettings["diffStyle"]}
+						>
+							Unified
+						</Toolbar.Button>
+					</DiffStyleToggleGroup>
+				)}
+			</Toolbar.Root>
+
+			<ReviewButton
+				allFilesReviewed={allFilesReviewed}
+				canMarkAll={preparedDiffFiles.length > 0 && preparedDiffFiles.length === changes.length}
+				onToggleAllReviewed={toggleAllFilesReviewed}
+			/>
+		</div>
+	);
+
 	return (
 		<div className={styles.diffTab}>
 			<Group
@@ -2691,59 +2813,22 @@ const Diff: FC<{
 				)}
 
 				<Panel id={"diff-panel" satisfies PanelId} minSize={300} className={styles.panel}>
-					<div className={styles.actions}>
-						{canShowFiles && <FilesToggle projectId={projectId} />}
+					{toolbarTarget === undefined ? (
+						<div className={styles.actions}>
+							{headerSlot}
 
-						{headerSlot}
-
-						{!statsShownElsewhere && (
-							<ChangeStats fileCount={changes.length} lineStats={lineStats} />
-						)}
-
-						<Toolbar.Root aria-label="Diff controls" className={styles.diffControls}>
-							<Toolbar.Button
-								className={getButtonClassName({ variant: "outline" })}
-								disabled={
-									preparedDiffFiles.length === 0 || preparedDiffFiles.length !== changes.length
-								}
-								onClick={toggleAllFilesReviewed}
-							>
-								{allFilesReviewed ? "Mark all unreviewed" : "Mark all reviewed"}
-							</Toolbar.Button>
-							<ToggleGroupStyles>
-								<Toolbar.Button
-									render={
-										<DiffOverflowToggle render={<ToggleStyles iconOnly />}>
-											<Icon name="text-wrap" />
-										</DiffOverflowToggle>
-									}
-								/>
-								<Toolbar.Button
-									render={
-										<DiffBackgroundsToggle render={<ToggleStyles iconOnly />}>
-											<Icon name="text-block" />
-										</DiffBackgroundsToggle>
-									}
-								/>
-							</ToggleGroupStyles>
-							{canUseSplitDiff && (
-								<DiffStyleToggleGroup render={<ToggleGroupStyles />}>
-									<Toolbar.Button
-										render={<Toggle render={<ToggleStyles />} />}
-										value={"split" satisfies GUISettings["diffStyle"]}
-									>
-										Split
-									</Toolbar.Button>
-									<Toolbar.Button
-										render={<Toggle render={<ToggleStyles />} />}
-										value={"unified" satisfies GUISettings["diffStyle"]}
-									>
-										Unified
-									</Toolbar.Button>
-								</DiffStyleToggleGroup>
+							{!statsShownElsewhere && (
+								<ChangeStats fileCount={changes.length} lineStats={lineStats} />
 							)}
-						</Toolbar.Root>
-					</div>
+
+							{controls}
+						</div>
+					) : (
+						<>
+							<div className={styles.diffTopGap} />
+							{toolbarTarget && createPortal(controls, toolbarTarget)}
+						</>
+					)}
 
 					{/* One panel child, so `.panel`'s two-row grid still sizes the
 					    diff: the bar is an auto row inside this, not a third row
@@ -2935,6 +3020,7 @@ const CommitDetails: FC<{
 	const tab = chosenTab ?? (review ? "pr" : "diff");
 	const ref = useRef<HTMLDivElement>(null);
 	useBranchTabHotkeys({ branchTab: tab, setBranchTab: setTab, target: ref, enabled: !!review });
+	const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
 
 	return (
 		<div className={styles.container} ref={ref}>
@@ -3016,6 +3102,10 @@ const CommitDetails: FC<{
 						displayValue={shortCommitId(commitDetails.commit.id)}
 						copyValue={commitDetails.commit.id}
 					/>
+
+					{!(review && tab === "pr") && (
+						<div className={styles.toolbarEnd} ref={setToolbarTarget} />
+					)}
 				</div>
 			</div>
 
@@ -3041,6 +3131,7 @@ const CommitDetails: FC<{
 					viewerRef={viewerRef}
 					didScrollToViaFileRef={didScrollToViaFileRef}
 					pendingFileRef={pendingFileRef}
+					toolbarTarget={toolbarTarget}
 				/>
 			)}
 		</div>
@@ -3099,13 +3190,14 @@ const LandedReviewView: FC<{ projectId: string; reviewId: number; branchName?: s
 };
 
 /** A branch's own changes, whatever the branch's standing. */
-const BranchDiff: FC<BranchDetailsProps> = ({
+const BranchDiff: FC<BranchDetailsProps & { toolbarTarget: HTMLElement | null }> = ({
 	branch,
 	projectId,
 	onActiveFileSelection,
 	viewerRef,
 	didScrollToViaFileRef,
 	pendingFileRef,
+	toolbarTarget,
 }) => {
 	const filesVisibleState = useAppSelector((state) =>
 		projectSlice.selectors.selectFilesVisible(state, projectId),
@@ -3140,13 +3232,14 @@ const BranchDiff: FC<BranchDetailsProps> = ({
 					viewerRef={viewerRef}
 					didScrollToViaFileRef={didScrollToViaFileRef}
 					pendingFileRef={pendingFileRef}
+					toolbarTarget={toolbarTarget}
 				/>
 			)}
 		</SuspenseQuery>
 	);
 };
 
-const BranchTitleRow: FC<{ branchName: string }> = ({ branchName }) => {
+const BranchTitleRow: FC<{ branchName: string; end?: ReactNode }> = ({ branchName, end }) => {
 	const detailsFullWindow = useAppSelector(interfaceSlice.selectors.selectDetailsFullWindow);
 
 	return (
@@ -3157,8 +3250,68 @@ const BranchTitleRow: FC<{ branchName: string }> = ({ branchName }) => {
 				<Icon name="branch" />
 				<h3 className={classes(styles.titleContent, "text-15", "text-semibold")}>{branchName}</h3>
 			</div>
+
+			{end !== undefined && <div className={styles.titleRowEnd}>{end}</div>}
 		</div>
 	);
+};
+
+const checksPhrase = (aggregate: AggregateCIChecks | null): string | null => {
+	if (aggregate === null) return null;
+	switch (aggregate.status) {
+		case "failure":
+			return `${aggregate.failure.length + aggregate.timedOut.length} of ${aggregate.total} checks failing`;
+		case "in_progress":
+			return `${aggregate.inProgress.length + aggregate.queued.length} of ${aggregate.total} checks running`;
+		case "success":
+			return `${aggregate.total} ${aggregate.total === 1 ? "check" : "checks"} passed`;
+		default:
+			return null;
+	}
+};
+
+/**
+ * Where the branch stands, in one line under its name: how far it is ahead of the target, how far
+ * the workspace has fallen behind it, and its review. Each part shows only once it is known.
+ */
+const BranchMeta: FC<{
+	projectId: string;
+	branchName: string;
+	review: ForgeReview | null | undefined;
+	/** Only an applied branch sits on the workspace's base, so only it is behind with it. */
+	applied: boolean;
+}> = ({ projectId, branchName, review, applied }) => {
+	const { data: target } = useQuery({
+		...headInfoQueryOptions(projectId),
+		select: (headInfo) => headInfo.target,
+	});
+	const { data: ahead } = useQuery({
+		...branchListQueryOptions(projectId),
+		select: (stacks) =>
+			stacks
+				.values()
+				.flatMap((stack) => stack.branches)
+				.find((listed) => listed.displayName === branchName)?.commitsAheadOfTarget ?? null,
+	});
+	const { data: checks } = useQuery({
+		...listCIChecksQueryOptions({ projectId, reference: branchName, polling: "passive" }),
+		enabled: !!review,
+		select: ({ aggregate }) => checksPhrase(aggregate),
+	});
+
+	const targetName = target
+		? `${target.remoteTrackingRef.remoteName}/${target.remoteTrackingRef.displayName}`
+		: null;
+	const parts = [
+		ahead != null &&
+			`${ahead} ${ahead === 1 ? "commit" : "commits"} ahead${targetName !== null ? ` of ${targetName}` : ""}`,
+		applied && target && target.commitsAhead > 0 && `${target.commitsAhead} behind`,
+		review && `${review.draft ? "draft " : ""}#${review.number}`,
+		review ? checks : null,
+	].filter((part): part is string => typeof part === "string");
+
+	if (parts.length === 0) return null;
+	return <p className={classes("text-13", styles.branchMeta)}>{parts.join(" · ")}</p>;
 };
 
 /**
@@ -3464,20 +3617,15 @@ const UnappliedBranchDetails: FC<BranchDetailsProps> = ({
 			)?.name,
 	});
 
+	const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
+
 	return (
 		<div className={styles.container} ref={ref}>
 			<div className={styles.headerWrap}>
-				<BranchTitleRow branchName={branchName} />
-
-				<div className={styles.tabsRow}>
-					<BranchTabToggle
-						branchTab={branchTab}
-						setBranchTab={setBranchTab}
-						prDisabled={reviewTab === null}
-					/>
-
-					<div className={styles.tabsRowRight}>
-						{worktreeName === undefined ? (
+				<BranchTitleRow
+					branchName={branchName}
+					end={
+						worktreeName === undefined ? (
 							<Button
 								variant="gray"
 								disabled={isApplyPending}
@@ -3490,8 +3638,19 @@ const UnappliedBranchDetails: FC<BranchDetailsProps> = ({
 							<span className={classes("text-12", rowStyles.fadedText)}>
 								Checked out in worktree {worktreeName}
 							</span>
-						)}
-					</div>
+						)
+					}
+				/>
+				<BranchMeta projectId={projectId} branchName={branchName} review={review} applied={false} />
+
+				<div className={styles.tabsRow}>
+					<BranchTabToggle
+						branchTab={branchTab}
+						setBranchTab={setBranchTab}
+						prDisabled={reviewTab === null}
+					/>
+
+					<div className={styles.toolbarEnd} ref={setToolbarTarget} />
 				</div>
 			</div>
 
@@ -3508,6 +3667,7 @@ const UnappliedBranchDetails: FC<BranchDetailsProps> = ({
 						viewerRef={viewerRef}
 						didScrollToViaFileRef={didScrollToViaFileRef}
 						pendingFileRef={pendingFileRef}
+						toolbarTarget={toolbarTarget}
 					/>
 				)}
 			</Suspense>
@@ -3568,8 +3728,6 @@ const LaneBranchDetails: FC<BranchDetailsProps> = ({
 	);
 	const defaultTab = supportsPullRequests && hasReview ? "pr" : "diff";
 	const branchTab = chosenTab ?? defaultTab;
-	const showCreatePullRequest =
-		branchTab === "diff" && supportsPullRequests && reviewsLoaded && !hasReview;
 
 	const setBranchTab = (tab: BranchTab) => {
 		dispatch(projectSlice.actions.setSelectedBranchTab({ projectId, branchName, tab }));
@@ -3596,22 +3754,18 @@ const LaneBranchDetails: FC<BranchDetailsProps> = ({
 		: null;
 	const canSubmit = pushFirst === null || !downstack?.anyHasConflicts;
 
+	const [toolbarTarget, setToolbarTarget] = useState<HTMLElement | null>(null);
+
 	return (
 		<div className={styles.container} ref={ref}>
 			<div className={styles.headerWrap}>
 				<BranchTitleRow branchName={branchName} />
+				<BranchMeta projectId={projectId} branchName={branchName} review={openReview} applied />
 
 				<div className={styles.tabsRow}>
 					<BranchTabToggle branchTab={branchTab} setBranchTab={setBranchTab} />
 
-					{showCreatePullRequest && (
-						<div className={styles.tabsRowRight}>
-							<Button variant="gray" onClick={() => setBranchTab("pr")}>
-								<Icon name="pr" />
-								Create pull request
-							</Button>
-						</div>
-					)}
+					{branchTab === "diff" && <div className={styles.toolbarEnd} ref={setToolbarTarget} />}
 
 					{branchTab === "pr" && supportsPullRequests && canUseForge && (
 						<Suspense>
@@ -3709,6 +3863,7 @@ const LaneBranchDetails: FC<BranchDetailsProps> = ({
 						viewerRef={viewerRef}
 						didScrollToViaFileRef={didScrollToViaFileRef}
 						pendingFileRef={pendingFileRef}
+						toolbarTarget={toolbarTarget}
 					/>
 				)}
 			</Suspense>
