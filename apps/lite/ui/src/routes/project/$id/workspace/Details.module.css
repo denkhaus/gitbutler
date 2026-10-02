@@ -103,6 +103,15 @@
 	gap: 6px;
 }
 
+/* Between the tab toggle and the commit filter: the toggle picks what the pane
+   shows, the filter narrows the diff it shows. */
+.toolbarSeparator {
+	align-self: center;
+	width: 1px;
+	height: 18px;
+	background-color: var(--border-2);
+}
+
 /* Where the header's toolbar row takes the diff's controls. */
 .toolbarEnd {
 	display: flex;
