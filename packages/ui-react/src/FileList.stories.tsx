@@ -309,3 +309,37 @@ export const Filter = meta.story({
 		);
 	},
 });
+
+/**
+ * A list whose count and line totals show elsewhere, here on the toolbar button that shows and
+ * hides it: the header names the files and keeps its search and menu.
+ */
+export const TitleOnly = meta.story({
+	render: function Render() {
+		const [query, setQuery] = useState<string | null>(null);
+		const shown = filterable.filter(
+			(file) => query === null || `${file.directory}/${file.name}`.includes(query),
+		);
+		return (
+			<FileList
+				title="Changed files"
+				focused
+				onOpenFilter={() => setQuery("")}
+				filter={
+					query === null
+						? null
+						: { value: query, onChange: setQuery, onClose: () => setQuery(null) }
+				}
+				actions={
+					<Button variant="ghost" iconOnly aria-label="Changes menu">
+						<Icon name="kebab" />
+					</Button>
+				}
+			>
+				{shown.map((file) => (
+					<FileListItem key={file.name} {...file} />
+				))}
+			</FileList>
+		);
+	},
+});

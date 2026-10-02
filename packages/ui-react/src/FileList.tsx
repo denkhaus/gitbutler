@@ -30,6 +30,8 @@ const plural = (count: number, word: string) =>
  * A panel of changed files: a header naming them, with their count and line totals, over the
  * {@link FileListItem}s, which scroll under it inset from the panel's edges and a pixel apart.
  *
+ * - Leave out `count` where the totals already show elsewhere, as on a toolbar button that shows
+ *   and hides the list; the header then names the files alone.
  * - `actions` sit at the header's end, after the search button that `onOpenFilter` adds. With
  *   `filter` given, the header is the filter field instead: typing narrows the list, Escape closes
  *   it and the down arrow hands over to the list through `onEnterList`. Opening it, the title
@@ -49,7 +51,7 @@ const plural = (count: number, word: string) =>
 export const FileList: FC<
 	{
 		title: string;
-		count: number;
+		count?: number;
 		added?: number;
 		removed?: number;
 		actions?: ReactNode;
@@ -80,11 +82,14 @@ export const FileList: FC<
 	children,
 	...props
 }) => {
-	const described = [
-		`${plural(count, "file")} changed`,
-		...(added > 0 ? [`${plural(added, "line")} added`] : []),
-		...(removed > 0 ? [`${plural(removed, "line")} removed`] : []),
-	];
+	const described =
+		count === undefined
+			? null
+			: [
+					`${plural(count, "file")} changed`,
+					...(added > 0 ? [`${plural(added, "line")} added`] : []),
+					...(removed > 0 ? [`${plural(removed, "line")} removed`] : []),
+				];
 	const filtering = filter != null;
 	// Both faces stay mounted so they can trade places, and the field keeps showing what was typed
 	// while it fades out.
@@ -98,12 +103,14 @@ export const FileList: FC<
 			>
 				<span className={styles.label} inert={filtering}>
 					<span className={classes("text-14", "text-bold", styles.title)}>{title}</span>
-					<Tooltip content={described[0]}>
-						<span className={styles.stats} aria-label={described.join(", ")}>
-							<Badge variant="lightGray">{count}</Badge>
-							<DiffStats added={added} removed={removed} className="text-12" />
-						</span>
-					</Tooltip>
+					{described && (
+						<Tooltip content={described[0]}>
+							<span className={styles.stats} aria-label={described.join(", ")}>
+								<Badge variant="lightGray">{count}</Badge>
+								<DiffStats added={added} removed={removed} className="text-12" />
+							</span>
+						</Tooltip>
+					)}
 				</span>
 				<Field.Root render={<FieldRootStyles />} className={styles.filterField} inert={!filtering}>
 					<FieldControlWithIcon
@@ -133,7 +140,7 @@ export const FileList: FC<
 					/>
 				</Field.Root>
 				<span className={styles.headerEnd}>
-					{(filter || (onOpenFilter && count > 0)) && (
+					{(filter || (onOpenFilter && count !== 0)) && (
 						<Button
 							variant="ghost"
 							iconOnly
