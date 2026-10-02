@@ -1877,8 +1877,11 @@ const DiffContents: FC<{
 						};
           }
 
+          /* The pane's ground, not the card's: the header inside rounds its own
+             top corners, and this shows around them. Opaque, so a stuck header
+             still hides the code scrolling under it. */
           [data-diffs-header="custom"] {
-            background-color: var(--bg-1);
+            background-color: var(--bg-2);
           }
 
           /* ui-react's DiffFile card, drawn on Pierre's parts, since CodeView
@@ -2699,7 +2702,11 @@ const Diff: FC<{
 			minSize={220}
 			groupResizeBehavior="preserve-pixel-size"
 		>
-			<div className={styles.filesPanelContent} ref={filesPanelRef}>
+			<div
+				className={styles.filesPanelContent}
+				data-side={filesOnRight ? "right" : "left"}
+				ref={filesPanelRef}
+			>
 				<FileList
 					className={styles.diffFiles}
 					title="Changed files"
@@ -2808,11 +2815,18 @@ const Diff: FC<{
 				{filesPanel !== null && !filesOnRight && (
 					<>
 						{filesPanel}
-						<ResizeHandle />
+						<ResizeHandle gap />
 					</>
 				)}
 
-				<Panel id={"diff-panel" satisfies PanelId} minSize={300} className={styles.panel}>
+				<Panel
+					id={"diff-panel" satisfies PanelId}
+					minSize={300}
+					className={classes(
+						styles.panel,
+						filesPanel !== null && (filesOnRight ? styles.diffBeforeFiles : styles.diffAfterFiles),
+					)}
+				>
 					{toolbarTarget === undefined ? (
 						<div className={styles.actions}>
 							{headerSlot}
@@ -2885,7 +2899,7 @@ const Diff: FC<{
 
 				{filesPanel !== null && filesOnRight && (
 					<>
-						<ResizeHandle />
+						<ResizeHandle gap />
 						{filesPanel}
 					</>
 				)}

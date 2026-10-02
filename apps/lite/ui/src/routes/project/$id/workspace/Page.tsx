@@ -676,6 +676,7 @@ const PageBody: FC<{ projectId: string }> = ({ projectId }) => {
 					style={{
 						"--diff-file-inset": `${diffFileSpacing.inset}px`,
 						"--diff-file-top": `${diffFileSpacing.top}px`,
+						"--diff-file-gap": `${diffFileSpacing.gap}px`,
 					}}
 					data-focus-scope={"details" satisfies FocusScope}
 				>
