@@ -1079,7 +1079,7 @@ pub fn get_gerrit_flags(
     Ok(flags)
 }
 
-fn resolve_branch_name(
+pub(crate) fn resolve_branch_name(
     ctx: &mut Context,
     id_map: &IdMap,
     branch_id: &str,

@@ -53,6 +53,8 @@ mod reword2;
 #[cfg(feature = "legacy")]
 mod setup;
 #[cfg(feature = "legacy")]
+mod sha;
+#[cfg(feature = "legacy")]
 mod sha256;
 mod skill;
 #[cfg(feature = "legacy")]

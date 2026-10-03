@@ -461,6 +461,16 @@ pub enum Subcommands {
     #[cfg_attr(feature = "raw-clap-docs", clap(verbatim_doc_comment))]
     Push(push::Command),
 
+    /// Print the commit a push would publish for a branch.
+    ///
+    /// The local workspace commit is never pushed, so tooling that tags or reports a release must
+    /// use the pushed commit instead. This prints exactly the SHA `but push` sends:
+    ///
+    /// - `but sha my-branch` - print the pushable commit of `my-branch`
+    #[cfg(feature = "legacy")]
+    #[cfg_attr(feature = "raw-clap-docs", clap(verbatim_doc_comment))]
+    Sha(sha::Platform),
+
     /// Update all applied branches onto the latest target branch.
     ///
     /// This fetches the latest changes from the remote and rebases all applied branches
@@ -1089,6 +1099,7 @@ pub mod oplog;
 pub mod push;
 #[cfg(feature = "legacy")]
 pub mod resolve;
+pub mod sha;
 
 pub mod branch;
 pub mod worktree;

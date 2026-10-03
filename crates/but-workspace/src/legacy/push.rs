@@ -158,6 +158,19 @@ pub fn workspace_branch_and_ancestors_push(
     Ok(result)
 }
 
+/// The commit `but push <branch>` publishes for `branch`, or `None` if the branch names no segment
+/// of the workspace at all.
+///
+/// Resolution uses [`but_graph::Graph::tip_skip_empty()`] on the branch's own segment, the same step
+/// the push loop performs for the ref it sends, so it cannot drift from what a push publishes.
+pub fn pushable_branch_tip<'graph>(
+    graph: &'graph but_graph::Graph,
+    branch: &gix::refs::FullNameRef,
+) -> Option<&'graph but_graph::Commit> {
+    let segment = graph.segment_by_ref_name(branch)?;
+    graph.tip_skip_empty(segment.id)
+}
+
 /// Return the segment of the selected local branch and every segment beneath it in top-to-base
 /// order, crossing into the lane a worktree rests on.
 ///

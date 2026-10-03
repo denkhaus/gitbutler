@@ -20,6 +20,7 @@ pub enum CommandName {
     Commit,
     CommitEmpty,
     Push,
+    Sha,
     Reword,
     OplogList,
     OplogSnapshot,

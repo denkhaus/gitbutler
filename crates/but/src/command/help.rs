@@ -133,6 +133,8 @@ pub(crate) fn grouped_subcommands(cmd: &clap::Command) -> IndexMap<Group, Vec<&c
                 #[cfg(feature = "legacy")]
                 SubcommandDiscriminant::Push => Group::ServerInteractions,
                 #[cfg(feature = "legacy")]
+                SubcommandDiscriminant::Sha => Group::ServerInteractions,
+                #[cfg(feature = "legacy")]
                 SubcommandDiscriminant::Pull => Group::ServerInteractions,
                 #[cfg(feature = "legacy")]
                 SubcommandDiscriminant::Merge => Group::ServerInteractions,
@@ -415,6 +417,7 @@ Operation History:
 Server Interactions:
   merge        Merge a branch directly onto the target branch, bypassing review
   push         Push changes in a branch to remote
+  sha          Print the commit a push would publish for a branch
   pull         Update all applied branches onto the latest target branch
   pr           Commands for creating and managing reviews on a forge, e.g. Git…
 

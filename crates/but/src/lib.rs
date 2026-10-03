@@ -881,6 +881,7 @@ async fn dispatch_subcommand(
         | Subcommands::Pull { .. }
         | Subcommands::Fetch
         | Subcommands::Push(..)
+        | Subcommands::Sha(..)
         | Subcommands::Oplog(..)
         | Subcommands::Undo(..)
         | Subcommands::Redo(..)
@@ -1331,6 +1332,12 @@ async fn dispatch_subcommand(
         #[cfg(feature = "legacy")]
         Subcommands::Push(push_args) => {
             command::legacy::push::handle(push_args, &mut ctx, out).await?;
+            None
+        }
+        #[cfg(feature = "legacy")]
+        Subcommands::Sha(sha_args) => {
+            let outcome = command::legacy::sha::sha(&mut ctx, sha_args)?;
+            out.print_cli_output(outcome)?;
             None
         }
         #[cfg(feature = "legacy")]

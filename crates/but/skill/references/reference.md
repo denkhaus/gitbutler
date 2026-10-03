@@ -9,7 +9,7 @@ Agent-focused reference for useful `but` commands.
 - [Committing](#committing) - `commit`
 - [Editing History](#editing-history) - `squash`, `amend`, `move`, `split`, `uncommit`, `reword`, `discard`
 - [Conflict Resolution](#conflict-resolution) - `resolve`
-- [Remote Operations](#remote-operations) - `push`, `pull`, `pr`, `merge`
+- [Remote Operations](#remote-operations) - `push`, `sha`, `pull`, `pr`, `merge`
 - [Workspace Maintenance](#workspace-maintenance) - `clean`, `worktree`
 - [History & Undo](#history--undo) - `undo`, `oplog`
 - [Setup & Configuration](#setup--configuration) - `setup`, `teardown`, `config`, `update`, `skill`
@@ -462,6 +462,16 @@ Force push is enabled by default with protection checks. Use `-s` only when inte
 After a successful push, GitButler also synchronizes PR targets and stack descriptions for the
 selected branch and its ancestors. A forge update failure is reported as a warning; it does not
 turn the completed Git push into a failure.
+
+### `but sha <branch>`
+
+Print the commit a push publishes for a branch — the tip that exists on the remote after `but push <branch>`. Use it wherever a tool must name a commit a remote can resolve: release tags, image labels, build metadata. The local workspace commit is never pushed, so `git rev-parse HEAD` names a commit origin cannot resolve, while `but sha` names the pushed one. Prints the full SHA on its own and exits non-zero when the branch is not part of the workspace.
+
+```bash
+but sha <branch-name>   # Print the pushable commit of the branch
+```
+
+The SHA is the one the following push publishes, so a tag created before the push still resolves afterwards.
 
 ### `but pull`
 
