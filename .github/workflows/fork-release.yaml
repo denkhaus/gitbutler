@@ -84,6 +84,10 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       VERSION: ${{ needs.resolve.outputs.version }}
+      # crates/but/build.rs maps release -> com.gitbutler.app, the standard app-data
+      # path shared with every upstream install; unset it would stamp the dev identity
+      # (com.gitbutler.app.dev) and the binary would miss the existing project registry.
+      CHANNEL: release
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
