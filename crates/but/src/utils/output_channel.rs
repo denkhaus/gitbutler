@@ -205,6 +205,12 @@ impl<'out> IntermediateChannel<'out> {
         self.out.prepare_for_terminal_input()
     }
 
+    /// The channel final output is written to, for commands whose whole result is
+    /// rendered by the handler itself rather than by a [`CliOutput`].
+    pub fn output_channel(&mut self) -> &mut OutputChannel {
+        self.out
+    }
+
     /// Get the output format setting.
     pub fn format(&self) -> OutputFormat {
         self.out.format()

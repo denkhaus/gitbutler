@@ -36,6 +36,8 @@ Create a commit
 - `-A, --above <BRANCH_OR_COMMIT>` Place the commit above BRANCH_OR_COMMIT, which must be an applied branch or commit. If BRANCH_OR_COMMIT is a commit, the new commit is placed on the same branch as the targeted commit. If BRANCH_OR_COMMIT is a branch, the new commit is placed on a new branch above the targeted branch. Use --branch <NAME> to name it; otherwise a name is generated.
 - `-B, --below <BRANCH_OR_COMMIT>` Place the commit below BRANCH_OR_COMMIT, which must be an applied branch or commit. If BRANCH_OR_COMMIT is a commit, the new commit is placed on the same branch as the targeted commit. If BRANCH_OR_COMMIT is a branch, the new commit is placed on a new branch below the targeted branch. Branches are treated as buckets, meaning that "below a branch" is treated as below the oldest ancestor on that branch. Use --branch <NAME> to name the new branch; otherwise a name is generated. If BRANCH_OR_COMMIT is a worktree, the new commit is placed on the tip of the branch that worktree has checked out.
 - `--empty` Create an empty commit even when there are changes
+- `--file <PATH>` Select by path instead of by the CLI ID of a but diff hunk. Appends to CHANGES, so both can be given at once. The path is interpreted like one given as CHANGES: it is relative to the repository root, and a trailing / selects every change below that directory.
+- `--hunks` List the hunk IDs of the selected changes without committing them. The listing is the diff but diff would show for CHANGES and --file, with every hunk's ID in its header; without either, it is every uncommitted hunk of the checkout. Pass an ID from the listing to but commit to commit that hunk. Nothing is committed, so message and targeting flags have no effect, and --empty and --interactive are rejected.
 - `-s, --switch` Switch to the target branch instead of remaining in the GitButler workspace
 
 ### but branch new [NAME]
@@ -205,6 +207,10 @@ Push changes in a branch to remote
 - `-s, --skip-force-push-protection` Skip force push protection checks
 - `--no-hooks` Bypass pre-push hooks
 - `-d, --dry-run` Show what would be pushed without actually pushing
+
+### but sha <BRANCH>
+Print the commit a push would publish for a branch
+- `<BRANCH>` Branch name or CLI ID whose pushable commit to print. This is the commit but push sends for the branch, i.e. the tip that exists on the remote after a push. It is not the local workspace commit, which is never pushed.
 
 ### but pull
 Update all applied branches onto the latest target branch

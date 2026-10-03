@@ -65,6 +65,8 @@ Stacks:           m0, n0              (auto-generated, 2–3 chars)
 
 ```bash
 but commit -b <branch-name> -m "message" <file-or-hunk-id>   # Commit selected changes to a branch
+but commit -b <branch-name> -m "message" --file <path>      # Commit a path instead of an ID
+but commit --hunks --file <path>                            # List a path's hunk IDs, committing nothing
 but amend -t <commit-id> <file-or-hunk-id> <file-or-hunk-id>  # Amend file(s) or hunk(s) into commit
 but squash <commit-id> -t <commit-id> -m "message"         # Squash commits
 but move <commit-id>:<file-id> --above <commit-id> -m "message" # Reposition a committed file
@@ -72,7 +74,9 @@ but move <commit-id>:<file-id>:<hunk-id> --above <commit-id> -m "message" # Repo
 but split <commit-id>:<file-id> -m "message"              # Extract a file immediately above its source
 ```
 
-IDs are positional and space-separated. `but help cli-ids` documents every ID kind in detail.
+IDs are positional and space-separated; `but commit --file <path>` selects by path instead, and
+`but commit --hunks` lists the selection's hunk IDs without committing. `but help cli-ids`
+documents every ID kind in detail.
 
 **Worktrees** (experimental, only with the `worktreeManipulation` feature flag on): each
 active worktree is drawn in `but status` as a lane of its own, nested above the commit the

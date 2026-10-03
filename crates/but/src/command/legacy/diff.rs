@@ -12,18 +12,13 @@ use crate::{
     },
     bad_input,
     id::{CommitId, CommittedFileId, IdAndHunk, UncommittedHunkOrFile},
-    theme::{Paint as _, Theme},
+    theme::Theme,
     utils::{
         CliOutput, CliOutputHuman, IntermediateChannel, WriteWithUtils,
         change_source::{ChangeSourceId, InvokedFrom},
-        diff_rendering::{
-            self, DetailsLine, DiffLineWriter, IdGen, WithSyntaxHighlighting, load_syntax_set,
-        },
-        string_interning::Strings,
+        diff_rendering,
     },
 };
-
-const CLEAR_TO_END_OF_LINE: &str = "\x1b[0K";
 
 #[derive(Debug)]
 pub struct DiffOutcome<'a> {
@@ -40,87 +35,44 @@ impl CliOutputHuman for DiffOutcome<'_> {
     ) -> anyhow::Result<()> {
         let Self { ctx, target } = self;
 
-        let syntax_set = load_syntax_set();
-        let syntax_theme = theme.load_syntax_highlighting_theme()?;
-
-        let strings = Strings::default();
-        let writer = DiffWriter { out, theme };
-        let mut writer =
-            WithSyntaxHighlighting::new(writer, strings.clone(), &syntax_set, &syntax_theme);
-        let mut id_gen = IdGen::new(strings);
-
         let options = diff_rendering::Options {
             skip_commit_header: true,
             skip_line_stats: true,
         };
 
-        match target {
-            DiffOperation::Uncommitted(source) => {
-                diff_rendering::render_uncommitted_source(
-                    ctx,
-                    source,
-                    theme,
-                    &mut id_gen,
-                    options,
-                    &mut writer,
-                )?;
-            }
-            DiffOperation::Commit { commit } => {
-                diff_rendering::render_commit(
-                    commit.commit_id,
-                    commit.change_id,
-                    ctx,
-                    theme,
-                    &mut id_gen,
-                    options,
-                    &mut writer,
-                )?;
-            }
+        diff_rendering::with_human_diff_writer(out, theme, |id_gen, writer| match target {
+            DiffOperation::Uncommitted(source) => diff_rendering::render_uncommitted_source(
+                ctx, source, theme, id_gen, options, writer,
+            ),
+            DiffOperation::Commit { commit } => diff_rendering::render_commit(
+                commit.commit_id,
+                commit.change_id,
+                ctx,
+                theme,
+                id_gen,
+                options,
+                writer,
+            ),
             DiffOperation::Branch { branch } => {
                 let branch = branch.shorten().to_string();
-                diff_rendering::render_branch(
-                    branch,
-                    ctx,
-                    theme,
-                    &mut id_gen,
-                    options,
-                    &mut writer,
-                )?;
+                diff_rendering::render_branch(branch, ctx, theme, id_gen, options, writer)
             }
             DiffOperation::UncommittedHunkOrFile { hunk } => {
-                diff_rendering::render_uncommitted_hunk(
-                    *hunk,
-                    theme,
-                    &mut id_gen,
-                    options,
-                    &mut writer,
-                )?;
+                diff_rendering::render_uncommitted_hunk(*hunk, theme, id_gen, options, writer)
             }
-            DiffOperation::CommittedFile { commit, path } => {
-                diff_rendering::render_committed_file(
-                    commit.commit_id,
-                    path,
-                    ctx,
-                    theme,
-                    &mut id_gen,
-                    options,
-                    &mut writer,
-                )?;
-            }
+            DiffOperation::CommittedFile { commit, path } => diff_rendering::render_committed_file(
+                commit.commit_id,
+                path,
+                ctx,
+                theme,
+                id_gen,
+                options,
+                writer,
+            ),
             DiffOperation::PathPrefix { id, hunks } => {
-                diff_rendering::render_path_prefix(
-                    &id,
-                    hunks,
-                    ctx,
-                    theme,
-                    &mut id_gen,
-                    options,
-                    &mut writer,
-                )?;
+                diff_rendering::render_path_prefix(&id, hunks, ctx, theme, id_gen, options, writer)
             }
-        }
-
-        Ok(())
+        })
     }
 }
 
@@ -340,69 +292,6 @@ impl CliOutput for DiffOutcome<'_> {
 
         let Self { ctx, target } = self;
         DeferredOutput { ctx, target }
-    }
-}
-
-struct DiffWriter<'a> {
-    out: &'a mut dyn WriteWithUtils,
-    theme: &'static Theme,
-}
-
-impl DiffLineWriter for DiffWriter<'_> {
-    fn write(&mut self, line: DetailsLine) -> anyhow::Result<()> {
-        match line {
-            DetailsLine::Text { line, .. } => {
-                let line_style = line.style;
-                for span in line.spans {
-                    let rendered = line_style.patch(span.style).paint(&span.content);
-                    write!(self.out, "{rendered}")?;
-                }
-                writeln!(self.out)?;
-            }
-            DetailsLine::TextToWrap { id: _, text } => {
-                writeln!(self.out, "{text}")?;
-            }
-            DetailsLine::Code(code_line) => {
-                let syntax_highlighted_line = code_line.syntax_highlighted_line.borrow();
-                let syntax_highlighted_line = syntax_highlighted_line
-                    .as_ref()
-                    .expect("WithSyntaxHighlighting ensures the line is highlighted");
-
-                let line_style = syntax_highlighted_line.style;
-                for span in syntax_highlighted_line {
-                    let rendered = line_style.patch(span.style).paint(&span.content);
-                    write!(self.out, "{rendered}")?;
-                }
-                if line_style.bg.is_some() && colored::control::SHOULD_COLORIZE.should_colorize() {
-                    write!(self.out, "{}", line_style.paint(CLEAR_TO_END_OF_LINE))?;
-                }
-                writeln!(self.out)?;
-            }
-            DetailsLine::SectionSeparator => {
-                writeln!(self.out)?;
-            }
-            DetailsLine::HunkHeader { width, line, .. } => {
-                for _ in 0..width {
-                    write!(self.out, "{}", self.theme.border.paint("─"))?;
-                }
-                writeln!(self.out, "{}", self.theme.border.paint("╮"))?;
-
-                for span in line {
-                    let rendered = span.style.paint(&span.content);
-                    write!(self.out, "{rendered}")?;
-                }
-                writeln!(self.out)?;
-
-                for _ in 0..width {
-                    write!(self.out, "{}", self.theme.border.paint("─"))?;
-                }
-                writeln!(self.out, "{}", self.theme.border.paint("╯"))?;
-
-                writeln!(self.out)?;
-            }
-        }
-
-        Ok(())
     }
 }
 

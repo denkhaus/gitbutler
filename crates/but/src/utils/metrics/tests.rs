@@ -274,6 +274,8 @@ fn commit_extra_props_describe_targeting_and_selection_without_ids() {
             changes: (0..change_count)
                 .map(|index| CliIdArg(format!("private-change-{index}")))
                 .collect(),
+            file: Vec::new(),
+            hunks: false,
             allow_merged: Default::default(),
             switch: false,
         });

@@ -29,11 +29,12 @@ use crate::{
         status::{Selectable, TuiOutcome, TuiRunOptions, tui_with_options},
     },
     error::BadInput,
-    id::{CommitId, UncommittedHunkOrFile},
+    id::{CommitId, IdAndHunk, UncommittedHunkOrFile},
     theme::{self, Theme},
     utils::{
-        CliOutput, CliOutputHuman, IntermediateChannel, WriteWithUtils,
+        CliOutput, CliOutputHuman, IntermediateChannel, OutputChannel, WriteWithUtils,
         change_source::{ChangeSourceId, ChangeSourceRepo, InvokedFrom, UncommittedSelection},
+        diff_rendering,
         diff_specs::DiffSpecBuilder,
         merged_upstream::MergedUpstream,
         rejection,
@@ -131,6 +132,15 @@ pub fn commit(
     args: Platform,
     invoked_from: &InvokedFrom,
 ) -> CliResult<(CommitOutcome, WorkspaceState)> {
+    if args.hunks {
+        // A listing is the command's whole result: it is written here, and the command ends
+        // instead of returning the commit outcome the dispatcher would print next. Bad input
+        // returns above, so it still takes the regular error path.
+        list_hunks(ctx, out.output_channel(), &args, invoked_from)?;
+        std::io::Write::flush(&mut std::io::stdout()).ok();
+        std::process::exit(0);
+    }
+
     let guard = ctx.exclusive_worktree_access();
     let mut meta = ctx.meta()?;
     let id_map = IdMap::new_from_context(ctx, guard.read_permission())?;
@@ -179,10 +189,14 @@ fn resolve(
         above,
         below,
         interactive,
-        changes,
+        mut changes,
+        file,
+        hunks: _,
         allow_merged,
         switch,
     } = args;
+    // `--file` is a path-anchored selector for the same selection `CHANGES` names.
+    changes.extend(file);
 
     if switch && !ctx.settings.feature_flags.single_branch {
         return Err(
@@ -322,6 +336,96 @@ fn unresolved_change_error(change: &CliIdArg, repo: &gix::Repository, id_map: &I
     } else {
         err.hint(CliIdArg::CHANGE_MISSING_HINT).into()
     }
+}
+
+/// One entry of a `--hunks` listing: something `but diff` knows how to render.
+enum HunkListing {
+    /// Every uncommitted hunk of one checkout, as a bare `but diff` shows them.
+    Checkout(ChangeSourceId),
+    /// Every uncommitted hunk below a directory, as `but diff <dir>/` shows them.
+    PathPrefix {
+        id: String,
+        hunks: NonEmpty<IdAndHunk>,
+    },
+    /// One file or hunk, as `but diff <file-or-hunk-id>` shows it.
+    HunkOrFile(Box<UncommittedHunkOrFile>),
+}
+
+/// `--hunks`: render the selected changes exactly as `but diff` renders them, and don't commit.
+///
+/// The listing is the whole result of the command, so it goes through the output channel rather
+/// than through a [`CommitOutcome`], which would have to describe a commit that was never made.
+/// Selection errors are returned so the caller can report them like any other bad input.
+fn list_hunks(
+    ctx: &mut Context,
+    out: &mut OutputChannel,
+    args: &Platform,
+    invoked_from: &InvokedFrom,
+) -> CliResult<()> {
+    if out.is_json() {
+        // Reporting would print nothing at all, which a machine caller cannot tell apart from an
+        // empty selection.
+        return Err(
+            bad_input("`--hunks` prints a diff listing, which has no JSON form")
+                .hint("Run `but diff --json` to read hunk IDs as JSON")
+                .into(),
+        );
+    }
+    let id_map = {
+        let guard = ctx.shared_worktree_access();
+        IdMap::new_from_context(ctx, guard.read_permission())?
+    };
+
+    // `--file` extends the change selection, exactly like naming the path as `CHANGES`.
+    let selection = args.changes.iter().chain(&args.file).collect::<Vec<_>>();
+    let mut listing = Vec::new();
+    if selection.is_empty() {
+        listing.push(HunkListing::Checkout(invoked_from.managed_source(&id_map)?));
+    }
+    for arg in selection {
+        let repo = ctx.repo.get()?;
+        match arg.try_resolve(&repo, &id_map, Purpose::Uncommitted, None)? {
+            Some(ResolvedCliIdArg::UncommittedHunkOrFile(hunk)) => {
+                listing.push(HunkListing::HunkOrFile(hunk));
+            }
+            Some(ResolvedCliIdArg::PathPrefix { id, hunks }) => {
+                listing.push(HunkListing::PathPrefix { id, hunks });
+            }
+            Some(ResolvedCliIdArg::Uncommitted(source)) => {
+                listing.push(HunkListing::Checkout(source));
+            }
+            // What is left has no hunks to list, so it is reported the way a commit reports a
+            // selection it cannot take.
+            Some(_) | None => return Err(unresolved_change_error(arg, &repo, &id_map)),
+        }
+    }
+
+    let options = diff_rendering::Options {
+        skip_commit_header: true,
+        skip_line_stats: true,
+    };
+    let theme = theme::get();
+    let Some(human) = out.for_human_or_shell() else {
+        return Ok(());
+    };
+    diff_rendering::with_human_diff_writer(human, theme, |id_gen, writer| {
+        for item in listing {
+            match item {
+                HunkListing::Checkout(source) => diff_rendering::render_uncommitted_source(
+                    ctx, source, theme, id_gen, options, writer,
+                )?,
+                HunkListing::PathPrefix { id, hunks } => diff_rendering::render_path_prefix(
+                    &id, hunks, ctx, theme, id_gen, options, writer,
+                )?,
+                HunkListing::HunkOrFile(hunk) => {
+                    diff_rendering::render_uncommitted_hunk(*hunk, theme, id_gen, options, writer)?
+                }
+            }
+        }
+        Ok(())
+    })?;
+
+    Ok(())
 }
 
 pub fn run(

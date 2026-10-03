@@ -471,6 +471,15 @@ but commit -b my-branch -m "Add parser" qs:5 qs:2 \
   && but commit -b my-branch -m "Add tests" uo:d
 ```
 
+When only one file's hunk IDs are needed, `but commit --hunks --file <path>`
+prints that file's hunks with their IDs and commits nothing, so a shared file can
+be read and split without a full `but diff`:
+
+```bash
+but commit --hunks --file .seeds/issues.jsonl   # the header lines name the hunk IDs
+but commit -b my-branch -m "Claim the fix" qs:5
+```
+
 The commits stack in the order you write them, so `Add parser` ends up below (older
 than) `Add tests`. Chain these commit commands when each references uncommitted IDs
 and a full branch name. If an ID stops resolving, re-read the diff and continue.

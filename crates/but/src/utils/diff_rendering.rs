@@ -31,8 +31,9 @@ use crate::{
         CommitId, CommitWithId, CommittedFileId, CommittedHunk, IdAndHunk, TreeChangeWithId,
         UncommittedHunk, UncommittedHunkOrFile, identify_hunks,
     },
-    theme::Theme,
+    theme::{Paint as _, Theme},
     utils::{
+        WriteWithUtils,
         change_source::ChangeSourceId,
         status_letter_kind,
         string_interning::{SharedStrings, Strings},
@@ -211,6 +212,95 @@ where
             other => {
                 self.highlight_lines = None;
                 self.inner.write(other)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// Render a diff to a human output channel with syntax highlighting, as `but diff` does.
+///
+/// Commands that show a diff to the user (rather than in the TUI, which has its own
+/// writer) share this setup so their output cannot drift apart.
+pub fn with_human_diff_writer(
+    out: &mut dyn WriteWithUtils,
+    theme: &'static Theme,
+    render: impl FnOnce(&mut IdGen<'_>, &mut dyn DiffLineWriter) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let syntax_set = load_syntax_set();
+    let syntax_theme = theme.load_syntax_highlighting_theme()?;
+
+    let strings = Strings::default();
+    let writer = HumanDiffWriter { out, theme };
+    let mut writer =
+        WithSyntaxHighlighting::new(writer, strings.clone(), &syntax_set, &syntax_theme);
+    let mut id_gen = IdGen::new(strings);
+
+    render(&mut id_gen, &mut writer)
+}
+
+/// Writes [`DetailsLine`]s as plain text, applying the theme's styles.
+struct HumanDiffWriter<'a> {
+    out: &'a mut dyn WriteWithUtils,
+    theme: &'static Theme,
+}
+
+/// Clears the styling of a line to the end of the terminal line, as a background color
+/// otherwise stops at the last painted character.
+const CLEAR_TO_END_OF_LINE: &str = "\x1b[0K";
+
+impl DiffLineWriter for HumanDiffWriter<'_> {
+    fn write(&mut self, line: DetailsLine) -> anyhow::Result<()> {
+        match line {
+            DetailsLine::Text { line, .. } => {
+                let line_style = line.style;
+                for span in line.spans {
+                    let rendered = line_style.patch(span.style).paint(&span.content);
+                    write!(self.out, "{rendered}")?;
+                }
+                writeln!(self.out)?;
+            }
+            DetailsLine::TextToWrap { id: _, text } => {
+                writeln!(self.out, "{text}")?;
+            }
+            DetailsLine::Code(code_line) => {
+                let syntax_highlighted_line = code_line.syntax_highlighted_line.borrow();
+                let syntax_highlighted_line = syntax_highlighted_line
+                    .as_ref()
+                    .expect("WithSyntaxHighlighting ensures the line is highlighted");
+
+                let line_style = syntax_highlighted_line.style;
+                for span in syntax_highlighted_line {
+                    let rendered = line_style.patch(span.style).paint(&span.content);
+                    write!(self.out, "{rendered}")?;
+                }
+                if line_style.bg.is_some() && colored::control::SHOULD_COLORIZE.should_colorize() {
+                    write!(self.out, "{}", line_style.paint(CLEAR_TO_END_OF_LINE))?;
+                }
+                writeln!(self.out)?;
+            }
+            DetailsLine::SectionSeparator => {
+                writeln!(self.out)?;
+            }
+            DetailsLine::HunkHeader { width, line, .. } => {
+                for _ in 0..width {
+                    write!(self.out, "{}", self.theme.border.paint("─"))?;
+                }
+                writeln!(self.out, "{}", self.theme.border.paint("╮"))?;
+
+                for span in line {
+                    let rendered = span.style.paint(&span.content);
+                    write!(self.out, "{rendered}")?;
+                }
+                writeln!(self.out)?;
+
+                for _ in 0..width {
+                    write!(self.out, "{}", self.theme.border.paint("─"))?;
+                }
+                writeln!(self.out, "{}", self.theme.border.paint("╯"))?;
+
+                writeln!(self.out)?;
             }
         }
 

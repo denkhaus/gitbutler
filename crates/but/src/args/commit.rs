@@ -9,7 +9,8 @@ use crate::args::atoms::{AllowMergedArg, CliIdArg};
 /// By default, all uncommitted changes of the checkout `but` runs in are included in the commit:
 /// the main worktree's, or a linked worktree's when run from inside one. This can be controlled
 /// with change flags such as `--empty` and `--interactive`, or by providing `CHANGES` as
-/// positional arguments.
+/// positional arguments, or paths with `--file`. `--hunks` lists the selected hunks instead of
+/// committing them.
 ///
 /// Run from a linked worktree, or given changes from one, the commit is placed at the tip of that
 /// worktree's branch. Otherwise, if there are no branches applied, a new branch is created for the
@@ -103,6 +104,24 @@ pub struct Platform {
     /// If omitted, everything uncommitted in the checkout `but` runs in is committed.
     #[clap(group = "changes_to_commit")]
     pub changes: Vec<CliIdArg>,
+
+    /// Select by path instead of by the CLI ID of a `but diff` hunk.
+    ///
+    /// Appends to `CHANGES`, so both can be given at once. The path is interpreted like one
+    /// given as `CHANGES`: it is relative to the repository root, and a trailing `/` selects
+    /// every change below that directory.
+    #[clap(long, value_name = "PATH")]
+    pub file: Vec<CliIdArg>,
+
+    /// List the hunk IDs of the selected changes without committing them.
+    ///
+    /// The listing is the diff `but diff` would show for `CHANGES` and `--file`, with every
+    /// hunk's ID in its header; without either, it is every uncommitted hunk of the checkout.
+    /// Pass an ID from the listing to `but commit` to commit that hunk. Nothing is committed,
+    /// so message and targeting flags have no effect, and `--empty` and `--interactive` are
+    /// rejected.
+    #[clap(long, conflicts_with_all = ["empty", "interactive"])]
+    pub hunks: bool,
 
     #[clap(flatten)]
     #[allow(missing_docs)]

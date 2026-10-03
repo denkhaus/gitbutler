@@ -185,6 +185,8 @@ Create a commit. Changes are positional CLI IDs; where the commit goes is a flag
 ```bash
 but commit -b <branch> -m "message"          # Commit ALL uncommitted changes of this checkout to branch
 but commit -b <branch> -m "message" <id> <id>  # Commit specific files or hunks by CLI ID
+but commit -b <branch> -m "message" --file <path>  # Commit a path; repeat --file for several paths
+but commit --hunks --file <path>             # List that path's hunk IDs without committing
 but commit -b <branch> -m "msg" -m "body"    # Repeat -m; parts joined by a blank line
 but commit --above <target> -m "message" <id>  # Place the commit above a commit or branch
 but commit --below <target> -m "message" <id>  # Place the commit below a commit or branch
@@ -207,6 +209,24 @@ Running `but commit` from inside a worktree acts on the main workspace, exactly 
 - **File IDs** from `but diff` or `but status -fv`: commits entire files
 - **Hunk IDs** (`<file-id>:<hunk-id>`) from `but diff`: commits individual hunks
 - IDs are space-separated (`<id> <id>`). Commas are not separators — `a1,b2` is parsed as a single ID and fails to resolve.
+- A path may be passed with `--file <path>` instead of an ID. It appends to the positional selection, and the flag repeats, so `but commit -m "msg" --file a/b.rs --file c/` commits that file and everything below `c/`. The path is the repository-relative one `but diff` prints, and a trailing `/` makes it a directory prefix — `c` without the slash resolves nothing.
+
+**Listing hunk IDs without committing:** `--hunks` prints the diff of the selection exactly as `but diff` prints it, so a caller can read the hunk IDs and pass them back to `but commit`; nothing is committed. Without `CHANGES` and `--file` it lists every uncommitted hunk of the checkout. The ID is the first token of each hunk's header line:
+
+```text
+─────────────╮
+ qs:5 M file │
+─────────────╯
+
+@@ -1,3 +1,4 @@
+───────────────
+  ┊ 1 │ +first hunk
+1 ┊ 2 │  enough
+2 ┊ 3 │  lines
+3 ┊ 4 │  to
+```
+
+`but commit --hunks --file file` prints that for `file` alone, and `but commit qs:5` commits exactly the hunk the header names. `--empty` and `--interactive` are rejected with `--hunks`.
 
 **Placing commits:** Use `--above <target>` or `--below <target>` when the new commit should be inserted at a specific position in existing history. Change-ID refs of existing commits remain valid after an insertion; sha and `#N`-suffixed refs may go stale — add `--status-after` when subsequent history edits need fresh refs.
 

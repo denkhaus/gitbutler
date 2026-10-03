@@ -36,13 +36,13 @@ but diff
 but commit -b <branch> -m "<msg>" <id> <id>
 ```
 
-`but commit -b <branch> ...` creates the branch when it does not exist and prints the created commit. Do not run a separate `but branch new`, status command, or verification diff unless the task needs workspace information that the result does not provide.
+`but commit -b <branch> ...` creates the branch when it does not exist and prints the created commit. Do not run a separate `but branch new`, status command, or verification diff unless the task needs workspace information that the result does not provide. When the changes to commit are one file whose hunk IDs you need, `but commit --hunks --file <path>` prints them the way `but diff` does and commits nothing.
 
 ## IDs
 
 The first token on each `but diff` / `but status` line is that line's ID. When a command needs an ID, copy it exactly from the current output; never hardcode or invent one. ID lifetimes differ by entity:
 
-- Changes and sources are **positional, space-separated** IDs (`but commit -b feat -m "msg" uvw:2e4 uvw:e2c`). An uncommitted hunk ID is written `<file-id>:<hunk-id>` (e.g. `uvw:2e4`, copied from bare `but diff`) — the part after the colon is the hunk's ID, **not** a line range (`uvw:16-40` is invalid). Do not invent flags like `--changes` / `--hunk` / `--ids`, pass a line range, or comma-separate IDs — `uvw,qyo` is parsed as one ID and fails.
+- Changes and sources are **positional, space-separated** IDs (`but commit -b feat -m "msg" uvw:2e4 uvw:e2c`). An uncommitted hunk ID is written `<file-id>:<hunk-id>` (e.g. `uvw:2e4`, copied from bare `but diff`) — the part after the colon is the hunk's ID, **not** a line range (`uvw:16-40` is invalid). Do not invent flags like `--changes` / `--hunk` / `--ids` (`--file <path>` and `--hunks` do exist), pass a line range, or comma-separate IDs — `uvw,qyo` is parsed as one ID and fails.
 - `but diff` is the exception: it accepts at most **one** target. Bare `but diff` shows all uncommitted files; inspect committed files or other entities one target at a time — never `but diff <id> <id>`.
 - A committed file is `<commit-id>:<file-id>` (e.g. `mzm:uvw`, shown under each commit). A committed hunk is `<commit-id>:<file-id>:<hunk-id>` and is shown by `but diff <commit-id>`. `@` means the uncommitted area.
 - Commit IDs are stable change IDs that survive history edits (`amend`, `squash`, `move`, `uncommit`, `reword`). Commits without a change ID (e.g. upstream-only) lead with a sha prefix instead, and `#N`-suffixed refs disambiguate duplicates — both go stale after history edits, and a stale sha can silently resolve to the wrong commit. The `(sha …)` on verbose commit lines is informational — do not pass it to commands.
@@ -63,6 +63,8 @@ The first token on each `but diff` / `but status` line is that line's ID. When a
 
 - Commit: `but commit -b <branch> -m "<msg>" <id> <id>` — `-b <branch>` creates the branch if it does not exist
 - Commit everything uncommitted: `but commit -b <branch> -m "<msg>"` (omit the IDs)
+- Commit one path without reading a diff first: `but commit -b <branch> -m "<msg>" --file <path>`. `--file` appends to the positional IDs and repeats; a trailing `/` selects a directory prefix.
+- List a path's hunk IDs without committing: `but commit --hunks --file <path>` — it prints the `but diff` preview of the selection, commits nothing, and its header lines are the IDs to pass to `but commit`. Without `--file` it lists every uncommitted hunk of the checkout.
 - Several commits from one diff: chain `but commit` calls with `&&` (commits stack oldest-first)
 - Commit at a specific history position: `--above <commit-or-branch>` or `--below <commit-or-branch>` (mutually exclusive). With a branch target, add `-b <new-name>` to name the new branch; otherwise its name is generated. The name must not already exist. Do not combine `-b` (even without a name) with commit/worktree targets.
 - Targeting is **required** when more than one **stack** is applied; without it `but commit` fails with "Unclear where to commit. Found more than one stack". Several branches stacked together count as one stack — an untargeted commit then silently lands on the stack's top branch, so pass `-b` whenever the branch matters.

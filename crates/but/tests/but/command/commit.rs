@@ -4785,3 +4785,143 @@ error: the argument '--switch' cannot be used with '--above <BRANCH_OR_COMMIT>'
 ...
 "#]]);
 }
+
+#[test]
+fn commit_hunks_lists_the_hunk_ids_of_a_file_without_committing() {
+    let env = Sandbox::init_scenario_with_target_and_default_settings("one-stack");
+    env.setup_metadata(&["A"]);
+
+    let original_data = "enough\nlines\nto\ncreate\nmultiple\nhunks\nwhen\nediting";
+    env.file("file", original_data);
+    env.but("commit --no-message").assert().success();
+
+    // Two well-separated edits, like two agents appending to one shared file.
+    env.file("file", format!("first hunk\n{original_data}\nlast hunk"));
+
+    // `--file` scopes the listing to that path.
+    env.but("commit --hunks --file file")
+        .assert()
+        .success()
+        .stderr_eq(snapbox::str![])
+        .stdout_eq(snapbox::str![[r#"
+─────────────╮
+ qs:5 M file │
+─────────────╯
+
+@@ -1,3 +1,4 @@
+───────────────
+  ┊ 1 │ +first hunk
+1 ┊ 2 │  enough
+2 ┊ 3 │  lines
+3 ┊ 4 │  to
+
+─────────────╮
+ qs:2 M file │
+─────────────╯
+
+@@ -6,3 +7,4 @@
+───────────────
+6 ┊  7 │  hunks
+7 ┊  8 │  when
+8 ┊  9 │  editing
+  ┊ 10 │ +last hunk
+
+"#]]);
+
+    // Listing commits nothing, so both hunks are still uncommitted.
+    let untouched = env.invoke_git("diff file");
+    assert!(
+        untouched.contains("+first hunk") && untouched.contains("+last hunk"),
+        "listing the hunks must not commit them, got: {untouched:?}"
+    );
+
+    // The ID the listing printed is what commits that one hunk.
+    env.but("commit --no-message qs:5").assert().success();
+
+    let after = env.invoke_git("diff file");
+    assert!(
+        !after.contains("+first hunk") && after.contains("+last hunk"),
+        "only the listed hunk may be committed, got: {after:?}"
+    );
+}
+
+#[test]
+fn commit_hunks_lists_every_uncommitted_hunk_without_a_selection() {
+    let env = Sandbox::init_scenario_with_target_and_default_settings("one-stack");
+    env.setup_metadata(&["A"]);
+
+    env.file("one", "one\n");
+    env.file("two", "two\n");
+
+    env.but("commit --hunks")
+        .assert()
+        .success()
+        .stderr_eq(snapbox::str![])
+        .stdout_eq(snapbox::str![[r#"
+────────────╮
+ kl:0 A one │
+────────────╯
+
+@@ -1,0 +1,1 @@
+───────────────
+  ┊ 1 │ +one
+
+──────────────╮
+ twop:5 A two │
+──────────────╯
+
+@@ -1,0 +1,1 @@
+───────────────
+  ┊ 1 │ +two
+
+"#]]);
+
+    let status = status_json(&env);
+    assert_eq!(
+        status["uncommittedChanges"].as_array().map(Vec::len),
+        Some(2),
+        "the listing must not commit anything"
+    );
+}
+
+#[test]
+fn commit_file_commits_only_the_named_path() {
+    let env = Sandbox::init_scenario_with_target_and_default_settings("one-stack");
+    env.setup_metadata(&["A"]);
+
+    env.file("one", "one\n");
+    env.file("two", "two\n");
+
+    env.but("commit --no-message -b feature --file one")
+        .assert()
+        .success();
+
+    let status = status_json_with_files(&env);
+    let branch = find_branch(&status, "feature");
+    assert_eq!(branch["commits"][0]["changes"][0]["filePath"], "one");
+    assert_eq!(
+        status["uncommittedChanges"].as_array().map(Vec::len),
+        Some(1),
+        "only the named path may be committed"
+    );
+}
+
+#[test]
+fn commit_hunks_has_no_json_form() {
+    let env = Sandbox::init_scenario_with_target_and_default_settings("one-stack");
+    env.setup_metadata(&["A"]);
+    env.file("file", "content\n");
+
+    // A machine caller cannot tell an empty JSON result from a listing, so the combination is
+    // rejected instead of printing nothing.
+    env.but("--json commit --hunks")
+        .allow_json()
+        .assert()
+        .failure()
+        .stderr_eq(snapbox::str![[r#"
+Error: `--hunks` prints a diff listing, which has no JSON form
+
+Hint: Run `but diff --json` to read hunk IDs as JSON
+
+"#]]);
+}
