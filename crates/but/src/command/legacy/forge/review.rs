@@ -303,6 +303,10 @@ pub fn set_review_template(
 /// Create a new forge review for a branch.
 /// If no branch is specified, prompts the user to select one.
 /// If there is only one branch without a an acco, asks for confirmation.
+///
+/// With `single`, publish only the named branch: no ancestor pushes, no ancestor reviews,
+/// and no native stack registration. This is the agent/automation path (`but pr new
+/// --single`); stacking remains the default for interactive use.
 #[expect(clippy::too_many_arguments)]
 pub async fn create_review(
     ctx: &mut Context,
@@ -312,6 +316,7 @@ pub async fn create_review(
     run_hooks: bool,
     default: bool,
     draft: bool,
+    single: bool,
     message: Option<ForgeReviewMessage>,
     out: &mut OutputChannel,
 ) -> anyhow::Result<()> {
@@ -366,6 +371,7 @@ pub async fn create_review(
         run_hooks,
         default,
         draft,
+        single,
         message.as_ref(),
         out,
         maybe_branch_names,
@@ -481,6 +487,7 @@ pub async fn handle_multiple_branches_in_workspace(
     run_hooks: bool,
     default_message: bool,
     draft: bool,
+    single: bool,
     message: Option<&ForgeReviewMessage>,
     out: &mut OutputChannel,
     selected_branches: Option<Vec<String>>,
@@ -534,6 +541,7 @@ pub async fn handle_multiple_branches_in_workspace(
             run_hooks,
             default_message,
             draft,
+            single,
             message,
             out,
         )
@@ -633,6 +641,7 @@ async fn publish_reviews_for_branch_and_dependents(
     run_hooks: bool,
     default_message: bool,
     draft: bool,
+    single: bool,
     message: Option<&ForgeReviewMessage>,
     out: &mut OutputChannel,
 ) -> Result<PublishReviewsOutcome, anyhow::Error> {
@@ -640,6 +649,7 @@ async fn publish_reviews_for_branch_and_dependents(
     let branch = gix::refs::Category::LocalBranch.to_full_name(branch_name)?;
     let chain = crate::legacy::workspace::review_chain(ctx, branch.as_ref())?
         .with_context(|| format!("Branch '{branch_name}' is in no lane"))?;
+    let chain = chain_for_publication_scope(chain, single);
     let dependencies = chain.len() - 1;
 
     if let Some(out) = out.for_human() {
@@ -655,11 +665,17 @@ async fn publish_reviews_for_branch_and_dependents(
         }
     }
 
+    let push_scope = if single {
+        but_workspace::legacy::PushScope::BranchOnly
+    } else {
+        but_workspace::legacy::PushScope::BranchAndAncestors
+    };
     let result = but_api::legacy::workspace::workspace_branch_and_ancestors_push_only(
         ctx,
         with_force,
         skip_force_push_protection,
         branch.as_ref(),
+        push_scope,
         run_hooks,
         vec![],
     )?;
@@ -714,10 +730,14 @@ async fn publish_reviews_for_branch_and_dependents(
     }
 
     // Batch creation uses the create-only primitive above and synchronizes the complete
-    // workspace review stack once all review associations are cached.
-    let review_sync =
-        but_api::legacy::forge::sync_review_stack_after_review_creation(ctx.to_sync(), branch)
-            .await;
+    // workspace review stack once all review associations are cached. Single-branch
+    // publication skips the sync entirely: no native stack metadata is registered for the
+    // new review, so it stays a plain branch PR that merges through the normal path.
+    let review_sync = if single {
+        but_forge::ReviewSyncOutcome::NotNeeded
+    } else {
+        but_api::legacy::forge::sync_review_stack_after_review_creation(ctx.to_sync(), branch).await
+    };
 
     let outcome = PublishReviewsOutcome {
         published: newly_published,
@@ -841,6 +861,19 @@ enum PublishReviewResult {
 struct ReviewMessagePlan<'a> {
     default_message: bool,
     message: Option<&'a ForgeReviewMessage>,
+}
+
+/// The publication scope of a review chain: the full chain bottom-up by default, or only
+/// the selected branch itself (the chain's last entry) when publishing single.
+///
+/// Single-branch publication creates no ancestor reviews, which also prevents any
+/// dependency-review recreation for branches that already have one.
+fn chain_for_publication_scope(chain: Vec<HeadInfoBranch>, single: bool) -> Vec<HeadInfoBranch> {
+    if single {
+        chain.into_iter().next_back().into_iter().collect()
+    } else {
+        chain
+    }
 }
 
 fn review_message_plan_for_branch<'a>(
@@ -1468,6 +1501,65 @@ mod tests {
 
         assert!(plan.default_message);
         assert!(plan.message.is_none());
+    }
+
+    #[test]
+    fn single_publication_covers_only_the_named_branch_of_a_stack() -> anyhow::Result<()> {
+        let (ctx, _tmp) =
+            crate::legacy::workspace::tests::context_with_worktree_on_reviewed_stack()?;
+        let chain_names = |branch: &str, single: bool| -> anyhow::Result<Vec<String>> {
+            let full = gix::refs::Category::LocalBranch.to_full_name(branch)?;
+            Ok(chain_for_publication_scope(
+                crate::legacy::workspace::review_chain(&ctx, full.as_ref())?
+                    .expect("fixture branch is in a lane"),
+                single,
+            )
+            .into_iter()
+            .map(|branch| branch.name)
+            .collect())
+        };
+
+        // Base first, the selected branch last: the default publication order.
+        assert_eq!(chain_names("B", false)?, ["A", "B"]);
+        assert_eq!(
+            chain_names("B", true)?,
+            ["B"],
+            "single publication reviews only the named branch, not its dependency A"
+        );
+        assert_eq!(
+            chain_names("C", true)?,
+            ["C"],
+            "an unreviewed top branch publishes alone, creating no dependency review"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stacked_publication_keeps_the_full_chain_by_default() {
+        let chain = ["A", "B", "C"].map(test_branch).to_vec();
+
+        let scoped = chain_for_publication_scope(chain, false);
+
+        assert_eq!(
+            scoped.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
+            ["A", "B", "C"],
+            "the default scope keeps dependencies and selected branch alike"
+        );
+    }
+
+    fn test_branch(name: &str) -> HeadInfoBranch {
+        HeadInfoBranch {
+            name: name.to_string(),
+            reference: gix::refs::Category::LocalBranch
+                .to_full_name(name)
+                .expect("valid branch name"),
+            tip: gix::ObjectId::null(gix::hash::Kind::Sha1),
+            base_commit: gix::ObjectId::null(gix::hash::Kind::Sha1),
+            review_id: None,
+            push_status: but_workspace::ui::PushStatus::CompletelyUnpushed,
+            commits: vec![],
+            upstream_commits: vec![],
+        }
     }
 
     #[test]

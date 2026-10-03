@@ -616,6 +616,23 @@ mod config_feature {
     #[test]
     fn json_keys_use_snake_case() {
         assert_eq!(FeatureFlag::SingleBranch.as_json_key(), "single_branch");
+        assert_eq!(FeatureFlag::PrSingle.as_json_key(), "pr_single");
+    }
+
+    #[test]
+    fn parses_pr_single_update() {
+        let args = Args::try_parse_from(["but", "config", "feature", "pr-single", "enable"])
+            .expect("parse feature update");
+
+        assert!(matches!(
+            args.cmd,
+            Some(Subcommands::Config(ConfigPlatform {
+                cmd: Some(ConfigCmd::Feature {
+                    flag: Some(FeatureFlag::PrSingle),
+                    status: Some(FeatureStatus::Enable),
+                }),
+            }))
+        ));
     }
 }
 
@@ -1058,6 +1075,40 @@ mod push {
 #[cfg(feature = "legacy")]
 mod pr {
     use clap::Parser;
+
+    #[test]
+    fn defaults_to_stacked_publication() {
+        let args =
+            crate::args::Args::try_parse_from(["but", "pr", "new", "topic"]).expect("parse args");
+
+        let cmd = args.cmd.expect("subcommand");
+        match cmd {
+            crate::args::Subcommands::Pr(crate::args::forge::pr::Platform {
+                cmd: Some(crate::args::forge::pr::Subcommands::New { single, .. }),
+                ..
+            }) => {
+                assert!(!single);
+            }
+            _ => panic!("unexpected command shape"),
+        }
+    }
+
+    #[test]
+    fn parses_single_flag() {
+        let args = crate::args::Args::try_parse_from(["but", "pr", "new", "topic", "--single"])
+            .expect("parse args");
+
+        let cmd = args.cmd.expect("subcommand");
+        match cmd {
+            crate::args::Subcommands::Pr(crate::args::forge::pr::Platform {
+                cmd: Some(crate::args::forge::pr::Subcommands::New { single, .. }),
+                ..
+            }) => {
+                assert!(single);
+            }
+            _ => panic!("unexpected command shape"),
+        }
+    }
 
     #[test]
     fn defaults_to_running_hooks() {

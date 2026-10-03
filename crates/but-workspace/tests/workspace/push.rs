@@ -73,6 +73,26 @@ fn push(
     skip_force_push_protection: bool,
     force_push_protection: bool,
 ) -> anyhow::Result<gitbutler_git::PushResult> {
+    push_with_scope(
+        repo,
+        meta,
+        branch,
+        with_force,
+        skip_force_push_protection,
+        force_push_protection,
+        but_workspace::legacy::PushScope::BranchAndAncestors,
+    )
+}
+
+fn push_with_scope(
+    repo: &gix::Repository,
+    meta: &but_meta::VirtualBranchesTomlMetadata,
+    branch: &gix::refs::FullNameRef,
+    with_force: bool,
+    skip_force_push_protection: bool,
+    force_push_protection: bool,
+    push_scope: but_workspace::legacy::PushScope,
+) -> anyhow::Result<gitbutler_git::PushResult> {
     let (info, workspace) = head_info(repo, meta)?;
     let mut db = but_db::DbHandle::new_at_path(":memory:")?;
     but_workspace::legacy::workspace_branch_and_ancestors_push(
@@ -85,6 +105,7 @@ fn push(
         skip_force_push_protection,
         force_push_protection,
         branch,
+        push_scope,
         false,
         false,
         Vec::new(),
@@ -162,6 +183,74 @@ fn pushed_branches(result: &gitbutler_git::PushResult) -> Vec<&str> {
         .iter()
         .map(|(branch, _, _)| branch.as_str())
         .collect()
+}
+
+fn single_scope(info: &RefInfo, branch: &str) -> Vec<String> {
+    let branch = gix::refs::Category::LocalBranch
+        .to_full_name(branch)
+        .expect("valid fixture branch name");
+    but_workspace::legacy::push::branch_only_segment(info, branch.as_ref())
+        .values()
+        .map(|segment| {
+            segment
+                .ref_name()
+                .map_or("<anon>".to_string(), |name| name.shorten().to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn branch_only_scope_is_the_selected_branch_alone() -> anyhow::Result<()> {
+    let (_tmp, repo, meta) = fixture("push")?;
+    let (info, _) = head_info(&repo, &meta)?;
+
+    assert_eq!(single_scope(&info, "bottom"), ["bottom"]);
+    assert_eq!(single_scope(&info, "middle"), ["middle"]);
+    assert_eq!(single_scope(&info, "top"), ["top"]);
+    assert_eq!(
+        single_scope(&info, "solo"),
+        ["solo"],
+        "an unrelated stack must not enter the single-branch scope"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn branch_only_push_leaves_the_ancestors_beneath_it_unpushed() -> anyhow::Result<()> {
+    let (_tmp, repo, meta) = fixture("push")?;
+
+    let result = push_with_scope(
+        &repo,
+        &meta,
+        r("refs/heads/middle"),
+        false,
+        false,
+        false,
+        but_workspace::legacy::PushScope::BranchOnly,
+    )?;
+
+    assert_eq!(
+        pushed_branches(&result),
+        ["middle"],
+        "a single-branch push transfers only the selected branch"
+    );
+
+    apply_remote_tracking_updates(&repo, &result)?;
+    let (info, _) = head_info(&repo, &meta)?;
+    assert_eq!(status(&info, "middle"), NothingToPush);
+    assert_eq!(
+        status(&info, "bottom"),
+        CompletelyUnpushed,
+        "the branch beneath the selected one stays unpushed"
+    );
+    assert_eq!(
+        status(&info, "top"),
+        CompletelyUnpushed,
+        "the branch above the selected one is untouched"
+    );
+
+    Ok(())
 }
 
 #[test]

@@ -7,4 +7,4 @@ pub use head::{
 pub mod ui;
 
 pub mod push;
-pub use push::workspace_branch_and_ancestors_push;
+pub use push::{PushScope, workspace_branch_and_ancestors_push};

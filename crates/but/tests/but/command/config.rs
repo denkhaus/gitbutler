@@ -171,6 +171,7 @@ fn feature_config_shell_output_uses_valid_identifiers() {
 Feature Flags:
 
   single-branch: enabled
+  pr-single: disabled
 
 "#]]);
 }
@@ -186,6 +187,57 @@ fn feature_config_json_output_uses_stable_key() {
         .stdout_eq(str![[r#"
 {
   "single_branch": true
+}
+
+"#]]);
+}
+
+#[test]
+fn feature_config_round_trips_pr_single() {
+    let env = Sandbox::empty();
+
+    env.but("--json config feature pr-single")
+        .allow_json()
+        .assert()
+        .success()
+        .stdout_eq(str![[r#"
+{
+  "pr_single": false
+}
+
+"#]]);
+
+    env.but("config feature pr-single enable")
+        .assert()
+        .success()
+        .stdout_eq(str![[r#"
+✓ Feature flag pr-single is now enabled
+
+"#]]);
+
+    env.but("--json config feature pr-single")
+        .allow_json()
+        .assert()
+        .success()
+        .stdout_eq(str![[r#"
+{
+  "pr_single": true
+}
+
+"#]]);
+
+    env.but("config feature pr-single disable")
+        .assert()
+        .success();
+
+    env.but("--json config feature")
+        .allow_json()
+        .assert()
+        .success()
+        .stdout_eq(str![[r#"
+{
+  "single_branch": true,
+  "pr_single": false
 }
 
 "#]]);

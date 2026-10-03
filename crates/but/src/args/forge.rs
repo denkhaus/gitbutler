@@ -45,6 +45,13 @@ pub mod pr {
             /// Create the review as a draft.
             #[clap(long, short = 'd', default_value_t = false)]
             draft: bool,
+            /// Publish only this branch: push it alone (no ancestors), create a review only
+            /// for it (no dependency reviews), and skip native stack registration entirely.
+            /// The default without this flag publishes the branch and its ancestors as a
+            /// stack. Agents and automation should pass `--single` to avoid collateral
+            /// ancestor PRs; set a persistent default with `but config feature pr-single enable`.
+            #[clap(long, default_value_t = false)]
+            single: bool,
         },
         /// Enable or disable the automatic merging of reviews.
         AutoMerge {
