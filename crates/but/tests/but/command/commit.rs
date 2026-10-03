@@ -829,6 +829,37 @@ editing"#]]
 }
 
 #[test]
+fn committing_one_hunk_keeps_the_remaining_worktree_change_unstaged() {
+    let env = Sandbox::init_scenario_with_target_and_default_settings("one-stack");
+    env.setup_metadata(&["A"]);
+
+    let original_data = "enough\nlines\nto\ncreate\nmultiple\nhunks\nwhen\nediting";
+    env.file("file", original_data);
+    env.but("commit --no-message").assert().success();
+
+    // Two well-separated edits, like two agents appending to one shared file.
+    env.file("file", format!("first hunk\n{original_data}\nlast hunk"));
+    env.but("commit --no-message qs:5").assert().success();
+
+    // Nothing may be staged: an index that already holds the worktree content shows the
+    // remaining work as a staged change, and every `git diff` then reports nothing to commit.
+    snapbox::assert_data_eq!(env.invoke_git("diff --cached"), snapbox::str![]);
+
+    // The remaining hunk has to be visible as an unstaged worktree change, while the committed
+    // hunk must not reappear.
+    let worktree_diff = env.invoke_git("diff file");
+    assert!(
+        worktree_diff.contains("+last hunk") && !worktree_diff.contains("+first hunk"),
+        "git diff must show only the remaining hunk, got: {worktree_diff:?}"
+    );
+    let against_head = env.invoke_git("diff HEAD file");
+    assert!(
+        against_head.contains("+last hunk") && !against_head.contains("+first hunk"),
+        "the worktree must differ from HEAD by the remaining hunk only, got: {against_head:?}"
+    );
+}
+
+#[test]
 fn create_commit_on_user_provided_branch() {
     let env = Sandbox::init_scenario_with_target_and_default_settings("zero-stacks");
     env.setup_metadata(&[]);

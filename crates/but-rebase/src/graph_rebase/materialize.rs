@@ -232,6 +232,13 @@ impl<'ws, 'graph, M: RefMetadata> SuccessfulRebase<'ws, 'graph, M> {
         if let Some(memory) = self.repo.objects.take_object_memory() {
             memory.persist(&self.repo)?;
         }
+        // Materializing without a checkout still moves HEAD, and the index has to follow for the
+        // same reason a checkout makes it follow (seed `gitbutler-58c2`). Read the tree before the
+        // ref edits below replace it.
+        let head_tree_before = materialize_options
+            .without_checkout
+            .then(|| repo.head_tree_id_or_empty().ok())
+            .flatten();
 
         let specs = self.linked_checkout_specs()?;
         let worktree_head_edits = worktree_head_edits(&specs)?;
@@ -296,6 +303,14 @@ impl<'ws, 'graph, M: RefMetadata> SuccessfulRebase<'ws, 'graph, M> {
         }
 
         edit_references_deleting_directory_conflicts_first(&repo, ref_edits)?;
+
+        if let Some(previous_tree) = head_tree_before {
+            but_core::worktree::sync_index_with_tree(
+                &repo,
+                previous_tree.detach(),
+                repo.head_tree_id_or_empty()?.detach(),
+            )?;
+        }
 
         let project_meta = self.workspace.graph.project_meta.clone();
         self.workspace

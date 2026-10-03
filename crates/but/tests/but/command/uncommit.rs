@@ -381,3 +381,32 @@ Hint: run `but help` for all commands
 
 "#]]);
 }
+
+#[test]
+fn uncommit_leaves_the_on_disk_index_describing_head() {
+    let env = Sandbox::init_scenario_with_target_and_default_settings("two-stacks");
+    env.setup_metadata(&["A"]);
+    commit_two_files_as_two_hunks_each(&env, "A", "a.txt", "b.txt", "first commit");
+
+    let status_output = env.but("--json status").allow_json().output().unwrap();
+    let status_json: serde_json::Value = serde_json::from_slice(&status_output.stdout).unwrap();
+    let commit_cli_id = status_json["stacks"][0]["branches"][0]["commits"][0]["cliId"]
+        .as_str()
+        .expect("the commit has a CLI ID")
+        .to_owned();
+
+    env.but(format!("uncommit {commit_cli_id}"))
+        .assert()
+        .success();
+
+    // Nothing is staged: the index describes HEAD, and the uncommitted files are worktree changes.
+    // An index left holding them makes `git diff` report nothing to commit, and every diff-based
+    // tool trusts that.
+    snapbox::assert_data_eq!(env.invoke_git("diff --cached"), snapbox::str![]);
+    // Git sees the uncommitted files as additions that are not staged, which is what a diff-based
+    // tool has to be able to tell apart from a commit.
+    snapbox::assert_data_eq!(
+        env.invoke_git("status --porcelain"),
+        snapbox::str!["?? a.txt\n?? b.txt"]
+    );
+}

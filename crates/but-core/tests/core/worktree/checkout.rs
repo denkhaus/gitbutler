@@ -682,20 +682,23 @@ Outcome {
     snapbox::assert_data_eq!(
         visualize_index(&*repo.index()?),
         snapbox::str![[r#"
-100644:832f532 file
+100644:4afd67b file
 100755:cb89473 file-in-index
 100644:3d3b36f file-renamed-in-index
 100644:3d3b36f file-to-be-renamed
 
 "#]]
     );
-    // Notably, 'file' is not in the index anymore, as that now always matches the worktree.
-    // The rename of `file-to-be-renamed-in-index` and deletion of `file-to-be-renamed` are
-    // preserved — the checkout only touched `file`.
+    // `file` is left with what the checkout committed: the index holds the checked out tree, so the
+    // hunks the commit did not consume stay in the worktree and Git reports them as unstaged
+    // changes (` M`). An index holding the worktree content would report them as staged instead,
+    // and `git diff` would then show nothing to commit. The rename of
+    // `file-to-be-renamed-in-index` and deletion of `file-to-be-renamed` are preserved — the
+    // checkout only touched `file`.
     snapbox::assert_data_eq!(
         git_status(&repo)?,
         snapbox::str![[r#"
-M  file
+ M file
 M  file-in-index
 RM file-to-be-renamed-in-index -> file-renamed-in-index
  D file-to-be-renamed
@@ -1178,6 +1181,46 @@ fn cancelling_consumed_changes_keeps_a_concurrent_edit() -> anyhow::Result<()> {
         std::fs::read_to_string(&file_path)?,
         "line1\nunchanged\nadded-b\nline2\nline3\nappended\n",
         "the snapshot is taken live, so the concurrent edit survives the cancellation"
+    );
+    Ok(())
+}
+
+#[test]
+fn checkout_puts_the_checked_out_tree_into_the_index() -> anyhow::Result<()> {
+    let (repo, _tmp) = writable_scenario("adjacent-line-additions");
+    // `separated` has two additions with an unchanged line between them, so consuming one of them
+    // leaves the other uncommitted - the shape of committing a single hunk of a shared file.
+    let new_commit = build_commit(
+        &repo,
+        |tree| {
+            let blob_id = repo.write_blob(b"line1\nadded-a\nunchanged\nline2\nline3\n")?;
+            tree.upsert("separated", EntryKind::Blob, blob_id)?;
+            Ok(())
+        },
+        "commit the first hunk only",
+    )?;
+    safe_checkout_from_head(new_commit.id, &repo, Default::default())?;
+
+    // The worktree keeps every uncommitted change, including the addition the commit did not take.
+    assert_eq!(
+        std::fs::read_to_string(repo.workdir_path("separated").expect("worktree file"))?,
+        "line1\nadded-a\nunchanged\nadded-b\nline2\nline3\n",
+        "the checkout keeps the addition the commit did not consume"
+    );
+
+    // Git has to report that work as *unstaged* worktree changes. An index which holds the worktree
+    // content reports it as staged `M ` instead, and `git diff` then shows nothing to commit, which
+    // every diff-based tool trusts.
+    // The committed addition is in HEAD and in the index, so Git shows it as part of the commit,
+    // and only what the worktree has beyond it stays visible - as an unstaged change.
+    snapbox::assert_data_eq!(
+        git_status(&repo)?,
+        snapbox::str![[r#"
+ M file
+ M file2
+ M separated
+
+"#]]
     );
     Ok(())
 }
