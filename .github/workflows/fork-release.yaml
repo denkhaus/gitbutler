@@ -1,0 +1,152 @@
+name: "Fork Release"
+
+# Tag-driven `but` CLI releases for the denkhaus fork (gitbutler-7371):
+# a v* tag - strictly v<semver>-fork.N, so upstream version collisions are
+# impossible - builds the but CLI for linux x86_64 and aarch64 and publishes a
+# GitHub Release with per-target tar.gz artifacts plus SHASUMS.txt. Consumers
+# pin the artifacts via mise `http:but` (fabro/.mise.toml, seeds, mulch).
+#
+# Decisions (mirroring denkhaus/seeds release.yml where it transfers):
+# - minimal hand-rolled workflow, no cargo-dist;
+# - glibc builds on stock ubuntu-22.04 runners (the same platform the upstream
+#   Lite CI builds but on): the but tree pulls openssl-sys via curl/git2, so a
+#   musl-static build would need vendored openssl+curl - not worth it for a
+#   fork-local tool;
+# - `packaged-but-distribution` feature: the binary is managed externally
+#   (mise), so `but update` self-management must stay disabled;
+# - the version is stamped through the compile-time VERSION env (the same
+#   mechanism the Lite CI uses); the release guard checks the built binary's
+#   `--version` output instead of a Cargo.toml version;
+# - workflow_dispatch is the test mode: it builds a GIVEN existing tag and
+#   leaves a DRAFT release, so the pipeline is verifiable without burning a
+#   version.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* tag to build a DRAFT release for (test mode)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      draft: ${{ steps.resolve.outputs.draft }}
+    steps:
+      - name: Resolve tag (dispatch input or pushed ref)
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          case "$tag" in
+            v[0-9]*.[0-9]*.[0-9]*-fork.[0-9]*) ;;
+            *) echo "FAIL: fork releases need a vX.Y.Z-fork.N tag, got: $tag"; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+          persist-credentials: false
+      - name: Derive version
+        id: resolve
+        run: |
+          tag="${{ steps.tag.outputs.tag }}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "draft=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: resolve
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04 # [linux, x64]
+            target: x86_64-unknown-linux-gnu
+          - platform: ubuntu-22.04-arm # [linux, ARM64]
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.platform }}
+    env:
+      CARGO_TERM_COLOR: always
+      VERSION: ${{ needs.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ needs.resolve.outputs.tag }}
+          persist-credentials: false
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install pkg-config libxss-dev libdbus-1-dev
+      # The pinned toolchain from rust-toolchain.toml installs on first cargo use.
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: but-fork-release-${{ matrix.target }}
+      - name: Build but CLI (release, locked)
+        run: cargo build --release --locked -p but --features packaged-but-distribution
+      - name: "Strict guard: binary --version reports the tag version"
+        run: |
+          bin=target/release/but
+          actual="$("$bin" --version)"
+          echo "but --version: $actual"
+          case "$actual" in
+            "but $VERSION") ;;
+            *) echo "FAIL: --version reported '$actual', expected 'but $VERSION' (stamped via VERSION env)"; exit 1 ;;
+          esac
+      - name: Smoke-run the binary
+        run: target/release/but --help >/dev/null
+      - name: Package tar.gz (binary at archive root)
+        run: |
+          name="but-${VERSION}-${{ matrix.target }}.tar.gz"
+          tar -czf "$name" -C target/release but
+          shasum -a 256 "$name"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.target }}
+          path: but-*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          path: dist
+          merge-multiple: true
+      - name: SHASUMS.txt (deterministic order)
+        working-directory: dist
+        run: |
+          ls -1 but-*.tar.gz | LC_ALL=C sort | xargs shasum -a 256 > SHASUMS.txt
+          cat SHASUMS.txt
+      - name: Create or update the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve.outputs.tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          DRAFT: ${{ needs.resolve.outputs.draft }}
+        run: |
+          args=(--title "but $TAG" --generate-notes)
+          if [ "$DRAFT" = "true" ]; then args+=(--draft); fi
+          assets=(dist/but-*.tar.gz dist/SHASUMS.txt)
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" "${assets[@]}" --repo "$GITHUB_REPOSITORY" "${args[@]}"
+          fi
