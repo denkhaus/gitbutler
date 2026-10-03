@@ -18,6 +18,18 @@ use indexmap::IndexMap;
 
 use crate::{RefInfo, ref_info::Segment, ui::PushStatus};
 
+/// How much of a branch's lane chain a push transfers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PushScope {
+    /// Push the selected branch and every segment beneath it, the default for stacks.
+    #[default]
+    BranchAndAncestors,
+    /// Push only the selected branch itself, leaving its ancestors untouched. This is the
+    /// `but pr new --single` path for agents and automation that must not publish the
+    /// branches their work happens to rest on.
+    BranchOnly,
+}
+
 /// Push a given branch and its ancestors
 #[allow(clippy::too_many_arguments)]
 pub fn workspace_branch_and_ancestors_push(
@@ -30,12 +42,16 @@ pub fn workspace_branch_and_ancestors_push(
     skip_force_push_protection: bool,
     force_push_protection: bool,
     branch: &gix::refs::FullNameRef,
+    push_scope: PushScope,
     run_hooks: bool,
     run_husky_hooks: bool,
     push_opts: Vec<but_gerrit::PushFlag>,
 ) -> Result<PushResult> {
     let graph = &ws.graph;
-    let to_push = branch_and_ancestor_segments(ref_info, branch);
+    let to_push = match push_scope {
+        PushScope::BranchAndAncestors => branch_and_ancestor_segments(ref_info, branch),
+        PushScope::BranchOnly => branch_only_segment(ref_info, branch),
+    };
 
     let remote_names = repo.remote_names();
     let target_ref_name = ws
@@ -157,6 +173,28 @@ pub fn branch_and_ancestor_segments<'a>(
         .lane_chain(branch)
         .into_iter()
         .flat_map(|(lane, index)| lane.segments_from(index))
+        .map(|segment| (segment.id, segment))
+        .collect()
+}
+
+/// Return only the segment the selected local branch names, without the segments beneath it.
+///
+/// This is the single-branch push scope ([`PushScope::BranchOnly`]): only the selected
+/// branch's ref is pushed, and the branches it rests on stay untouched.
+pub fn branch_only_segment<'a>(
+    ref_info: &'a RefInfo,
+    branch: &gix::refs::FullNameRef,
+) -> IndexMap<but_graph::SegmentIndex, &'a Segment> {
+    ref_info
+        .lane_chain(branch)
+        .into_iter()
+        .take(1)
+        .flat_map(|(lane, index)| {
+            lane.segments
+                .get(index..index + 1)
+                .unwrap_or_default()
+                .iter()
+        })
         .map(|segment| (segment.id, segment))
         .collect()
 }

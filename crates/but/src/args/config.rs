@@ -393,18 +393,22 @@ pub enum MetricsStatus {
 pub enum FeatureFlag {
     /// Enable single-branch mode.
     SingleBranch,
+    /// Default `but pr new` to publishing only the named branch (`--single`).
+    PrSingle,
 }
 
 impl FeatureFlag {
     pub fn as_str(self) -> &'static str {
         match self {
             FeatureFlag::SingleBranch => "single-branch",
+            FeatureFlag::PrSingle => "pr-single",
         }
     }
 
     pub fn as_json_key(self) -> &'static str {
         match self {
             FeatureFlag::SingleBranch => "single_branch",
+            FeatureFlag::PrSingle => "pr_single",
         }
     }
 }

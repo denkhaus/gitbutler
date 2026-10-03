@@ -1500,8 +1500,13 @@ async fn dispatch_subcommand(
                     no_hooks,
                     default,
                     draft,
+                    single,
                 }) => {
                     let draft = top_level_draft || draft;
+                    // The persistent default only widens single-branch publication; an
+                    // explicit `--single` flag agrees with it, and there is no `--stacked`
+                    // override to get wrong.
+                    let single = single || app_settings.feature_flags.pr_single;
                     // Read message content from file or inline
                     let message_content = match &file {
                         Some(path) => Some(std::fs::read_to_string(path).with_context(|| {
@@ -1541,6 +1546,7 @@ async fn dispatch_subcommand(
                         !no_hooks,
                         default,
                         draft,
+                        single,
                         review_message,
                         out,
                     )
@@ -1585,6 +1591,7 @@ async fn dispatch_subcommand(
                         true,
                         false,
                         top_level_draft,
+                        app_settings.feature_flags.pr_single,
                         None,
                         out,
                     )

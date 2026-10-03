@@ -223,6 +223,7 @@ Create a new review for a branch, force-pushing it first
 - `--no-hooks` Bypass pre-push hooks
 - `-t, --default` Use the default content for the review title and description, skipping any prompts. If the branch contains only a single commit, the commit message will be used
 - `-d, --draft` Create the review as a draft
+- `--single` Publish only this branch: push it alone (no ancestors), create a review only for it (no dependency reviews), and skip native stack registration entirely. The default without this flag publishes the branch and its ancestors as a stack. Agents and automation should pass --single to avoid collateral ancestor PRs; set a persistent default with but config feature pr-single enable
 
 ### but pr auto-merge [SELECTOR]
 Enable or disable the automatic merging of reviews

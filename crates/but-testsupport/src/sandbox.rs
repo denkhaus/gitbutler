@@ -506,6 +506,7 @@ impl Sandbox {
             },
             feature_flags: FeatureFlags {
                 single_branch: true,
+                pr_single: false,
                 watch_mode: "auto".into(),
                 write_commit_evolution: true,
                 tui_file_browser: false,

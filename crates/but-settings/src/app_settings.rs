@@ -38,6 +38,10 @@ but_schemars::register_sdk_type!(GitHubOAuthAppSettings);
 pub struct FeatureFlags {
     /// Enable single branch mode.
     pub single_branch: bool,
+    /// Default `but pr new` to single-branch publication: push only the named branch,
+    /// create a review only for it, and skip native stack registration. The `--single`
+    /// flag selects the same behavior per invocation.
+    pub pr_single: bool,
     /// Control how the filesystem watch should be established.
     /// Possible values: "auto", "legacy", "modern".
     /// "auto" automatically picks based on platform heuristics (default).

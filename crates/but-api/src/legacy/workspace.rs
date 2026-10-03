@@ -369,6 +369,7 @@ pub async fn workspace_branch_and_ancestors_push(
             with_force,
             skip_force_push_protection,
             push_branch.as_ref(),
+            but_workspace::legacy::PushScope::default(),
             run_hooks,
             push_opts,
         )
@@ -424,11 +425,15 @@ pub struct WorkspaceBranchAndAncestorsPushOutcome {
 }
 
 /// Perform only the Git push portion of [`workspace_branch_and_ancestors_push()`].
+///
+/// `push_scope` selects whether the ancestors beneath `branch` are pushed along with it;
+/// pass [`but_workspace::legacy::PushScope::BranchOnly`] to push just `branch` itself.
 pub fn workspace_branch_and_ancestors_push_only(
     ctx: &mut Context,
     with_force: bool,
     skip_force_push_protection: bool,
     branch: &gix::refs::FullNameRef,
+    push_scope: but_workspace::legacy::PushScope,
     run_hooks: bool,
     push_opts: Vec<but_gerrit::PushFlag>,
 ) -> Result<gitbutler_git::PushResult> {
@@ -472,6 +477,7 @@ pub fn workspace_branch_and_ancestors_push_only(
         skip_force_push_protection,
         ctx.legacy_project.force_push_protection,
         branch,
+        push_scope,
         run_hooks,
         ctx.legacy_project.husky_hooks_enabled,
         push_opts,

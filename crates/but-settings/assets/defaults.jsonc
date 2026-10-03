@@ -23,6 +23,8 @@
 	"featureFlags": {
 		/// Enable single branch mode.
 		"singleBranch": false,
+		/// Default `but pr new` to single-branch publication (the `--single` flag per invocation).
+		"prSingle": false,
 		/// Control how the filesystem watch should be established.
 		/// Possible values: "auto", "legacy", "modern".
 		"watchMode": "auto",

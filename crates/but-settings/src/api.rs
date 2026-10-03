@@ -23,6 +23,7 @@ but_schemars::register_sdk_type!(TelemetryUpdate);
 /// Update request for [`crate::app_settings::FeatureFlags`].
 pub struct FeatureFlagsUpdate {
     pub single_branch: Option<bool>,
+    pub pr_single: Option<bool>,
     pub worktree_manipulation: Option<bool>,
 }
 but_schemars::register_sdk_type!(FeatureFlagsUpdate);
@@ -91,12 +92,16 @@ impl AppSettingsWithDiskSync {
         &self,
         FeatureFlagsUpdate {
             single_branch,
+            pr_single,
             worktree_manipulation,
         }: FeatureFlagsUpdate,
     ) -> Result<()> {
         let mut settings = self.get_mut_enforce_save()?;
         if let Some(single_branch) = single_branch {
             settings.feature_flags.single_branch = single_branch;
+        }
+        if let Some(pr_single) = pr_single {
+            settings.feature_flags.pr_single = pr_single;
         }
         if let Some(worktree_manipulation) = worktree_manipulation {
             settings.feature_flags.worktree_manipulation = worktree_manipulation;
@@ -155,6 +160,7 @@ mod tests {
         settings
             .update_feature_flags(FeatureFlagsUpdate {
                 single_branch: Some(true),
+                pr_single: None,
                 worktree_manipulation: None,
             })
             .unwrap();
@@ -186,6 +192,49 @@ mod tests {
             update.single_branch,
             Some(true),
             "the API payload should map singleBranch to the settings update"
+        );
+    }
+
+    #[test]
+    fn update_feature_flags_updates_pr_single_and_persists() {
+        let (dir, settings) = create_test_settings();
+        let original_single_branch = settings.get().unwrap().feature_flags.single_branch;
+
+        settings
+            .update_feature_flags(FeatureFlagsUpdate {
+                single_branch: None,
+                pr_single: Some(true),
+                worktree_manipulation: None,
+            })
+            .unwrap();
+
+        let s = settings.get().unwrap();
+        assert!(
+            s.feature_flags.pr_single,
+            "the API should be able to enable the pr-single flag"
+        );
+        assert_eq!(
+            s.feature_flags.single_branch, original_single_branch,
+            "partial updates should leave unrelated feature flags untouched"
+        );
+        drop(s);
+
+        let reloaded = AppSettingsWithDiskSync::new_with_customization(dir.path(), None).unwrap();
+        assert!(
+            reloaded.get().unwrap().feature_flags.pr_single,
+            "the pr-single flag should be readable after reload"
+        );
+    }
+
+    #[test]
+    fn feature_flags_update_deserializes_pr_single_from_api_payload() {
+        let update: FeatureFlagsUpdate =
+            serde_json::from_value(serde_json::json!({ "prSingle": true })).unwrap();
+
+        assert_eq!(
+            update.pr_single,
+            Some(true),
+            "the API payload should map prSingle to the settings update"
         );
     }
 }
