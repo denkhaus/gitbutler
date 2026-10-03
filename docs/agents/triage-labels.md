@@ -1,0 +1,20 @@
+# Triage Labels
+
+The skills speak in terms of five canonical triage roles. This file maps those
+roles to the actual label strings used in this repo's issue tracker (Seeds).
+
+| Label in mattpocock/skills | Label in our tracker | Meaning                                  |
+| -------------------------- | -------------------- | ---------------------------------------- |
+| `needs-triage`             | `needs-triage`       | Maintainer needs to evaluate this issue  |
+| `needs-info`               | `needs-info`         | Waiting on reporter for more information |
+| `ready-for-agent`          | `ready-for-agent`    | Fully specified, ready for an AFK agent  |
+| `ready-for-human`          | `ready-for-human`    | Requires human implementation            |
+| `wontfix`                  | `wontfix`            | Will not be actioned                     |
+
+When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the
+corresponding label string from this table.
+
+Seeds note: labels are free-form strings on a seed (`seeds create --labels ...`),
+so a label exists only once applied — `seeds label list-all` shows what is in
+use. Nothing is pre-seeded in this fork, so the first triage run creates the
+strings above.

@@ -42,3 +42,21 @@ this order:
 - For Lite work under `apps/lite/`, follow `apps/lite/AGENTS.md`.
 - For the React component library under `packages/ui-react/`, follow
   `packages/ui-react/AGENTS.md`.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in Seeds (`.seeds/`, `seeds` CLI) — not GitHub. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles map 1:1 to their default label strings. See `docs/agents/triage-labels.md`.
+
+### Expertise
+
+Durable know-how lives in Mulch (`.mulch/`, `mulch` CLI). See `docs/agents/expertise.md`.
+
+### Domain docs
+
+Single-context: one `CONTEXT.md` + `docs/adr/` at the root. See `docs/agents/domain.md`.
