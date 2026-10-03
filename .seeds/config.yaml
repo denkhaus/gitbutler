@@ -1,0 +1,4 @@
+project: gitbutler
+version: '1'
+max_plan_depth: 3
+

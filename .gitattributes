@@ -1,1 +1,2 @@
 *.sh eol=lf
+.mulch/expertise/*.jsonl merge=union

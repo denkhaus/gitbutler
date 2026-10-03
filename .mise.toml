@@ -1,0 +1,16 @@
+# mise — tools for OUR fork work (tracker, gates, scripts). The repo's own
+# toolchain comes from rust-toolchain.toml (Rust via rustup) and pnpm for
+# the frontend; we deliberately add only the os-eco toolset here.
+[tools]
+# Nushell — fork scripts + gates (scripts/**.nu).
+"aqua:nushell/nushell" = { version = "0.115.0", exe = "nu" }
+# Seeds — this repo's own issue tracker (`.seeds/`). In-house Rust CLI;
+# sd-0.5.15 store read+write compatible. Exposes `seeds` on PATH.
+"cargo:seeds" = "0.6.0"
+# Mulch — structured expertise management (`.mulch/`). npm CLI (`ml`).
+"npm:@os-eco/mulch-cli" = "0.10.7"
+
+[settings.npm]
+# Non-TTY installs abort on the default aube backend's interactive approval;
+# bun -g is the verified path for these script-less CLIs.
+package_manager = "bun"
