@@ -1508,6 +1508,7 @@ async fn dispatch_subcommand(
                     default,
                     draft,
                     single,
+                    base,
                 }) => {
                     let draft = top_level_draft || draft;
                     // The persistent default only widens single-branch publication; an
@@ -1554,6 +1555,7 @@ async fn dispatch_subcommand(
                         default,
                         draft,
                         single,
+                        base,
                         review_message,
                         out,
                     )
@@ -1599,6 +1601,7 @@ async fn dispatch_subcommand(
                         false,
                         top_level_draft,
                         app_settings.feature_flags.pr_single,
+                        None,
                         None,
                         out,
                     )

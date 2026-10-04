@@ -52,6 +52,13 @@ pub mod pr {
             /// ancestor PRs; set a persistent default with `but config feature pr-single enable`.
             #[clap(long, default_value_t = false)]
             single: bool,
+            /// Base the new review targets on the forge, overriding the computed stack
+            /// target (the nearest reviewed ancestor branch, else the project target
+            /// branch). Requires `--single` or the pr-single feature default: stacked
+            /// publication recomputes review bases from the workspace stack. The branch
+            /// must exist on the forge.
+            #[clap(long, value_name = "BRANCH")]
+            base: Option<String>,
         },
         /// Enable or disable the automatic merging of reviews.
         AutoMerge {

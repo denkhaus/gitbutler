@@ -307,6 +307,8 @@ pub fn set_review_template(
 /// With `single`, publish only the named branch: no ancestor pushes, no ancestor reviews,
 /// and no native stack registration. This is the agent/automation path (`but pr new
 /// --single`); stacking remains the default for interactive use.
+///
+/// With `base`, target the new review at that branch instead of the computed stack target.
 #[expect(clippy::too_many_arguments)]
 pub async fn create_review(
     ctx: &mut Context,
@@ -317,9 +319,20 @@ pub async fn create_review(
     default: bool,
     draft: bool,
     single: bool,
+    base: Option<String>,
     message: Option<ForgeReviewMessage>,
     out: &mut OutputChannel,
 ) -> anyhow::Result<()> {
+    // A custom base only sticks in single-branch publication: the stacked path
+    // recomputes review bases from the workspace stack in its post-creation sync,
+    // which would override the requested base.
+    if base.is_some() && !single {
+        anyhow::bail!(
+            "`--base` requires `--single` (or `but config feature pr-single enable`): \
+             stacked publication recomputes review bases from the workspace stack"
+        );
+    }
+
     // Fail fast if no forge user is authenticated, before pushing or prompting.
     ensure_forge_authentication(ctx).await?;
 
@@ -372,6 +385,7 @@ pub async fn create_review(
         default,
         draft,
         single,
+        base.as_deref(),
         message.as_ref(),
         out,
         maybe_branch_names,
@@ -488,6 +502,7 @@ pub async fn handle_multiple_branches_in_workspace(
     default_message: bool,
     draft: bool,
     single: bool,
+    base: Option<&str>,
     message: Option<&ForgeReviewMessage>,
     out: &mut OutputChannel,
     selected_branches: Option<Vec<String>>,
@@ -542,6 +557,7 @@ pub async fn handle_multiple_branches_in_workspace(
             default_message,
             draft,
             single,
+            base,
             message,
             out,
         )
@@ -642,6 +658,7 @@ async fn publish_reviews_for_branch_and_dependents(
     default_message: bool,
     draft: bool,
     single: bool,
+    base: Option<&str>,
     message: Option<&ForgeReviewMessage>,
     out: &mut OutputChannel,
 ) -> Result<PublishReviewsOutcome, anyhow::Error> {
@@ -709,12 +726,20 @@ async fn publish_reviews_for_branch_and_dependents(
         }
         let message_plan =
             review_message_plan_for_branch(&branch.name, branch_name, default_message, message);
+        // The base override targets the review of the selected branch itself; dependency
+        // reviews keep their natural stack target.
+        let base = if branch.name == branch_name {
+            base
+        } else {
+            None
+        };
         let published_review = publish_review_for_branch(
             ctx,
             branch,
             review_map,
             message_plan.default_message,
             draft,
+            base,
             message_plan.message,
             out,
         )
@@ -917,12 +942,14 @@ pub fn parse_review_message(content: &str) -> anyhow::Result<ForgeReviewMessage>
     Ok(ForgeReviewMessage { title, body })
 }
 
+#[expect(clippy::too_many_arguments)]
 async fn publish_review_for_branch(
     ctx: &mut Context,
     branch: &HeadInfoBranch,
     review_map: &std::collections::HashMap<String, Vec<but_forge::ForgeReview>>,
     default_message: bool,
     draft: bool,
+    base: Option<&str>,
     message: Option<&ForgeReviewMessage>,
     out: &mut OutputChannel,
 ) -> anyhow::Result<PublishReviewResult> {
@@ -943,8 +970,12 @@ async fn publish_review_for_branch(
         return Ok(PublishReviewResult::AlreadyExists(vec![review]));
     }
 
-    let target_branch =
-        but_api::legacy::forge::review_creation_target(ctx, branch.reference.as_ref())?;
+    let target_branch = match base {
+        // The override skips the computed stack target, whose remote-ancestry checks
+        // assume the workspace stack; the forge validates that the base exists.
+        Some(base) => normalized_review_base(base, branch_name)?,
+        None => but_api::legacy::forge::review_creation_target(ctx, branch.reference.as_ref())?,
+    };
     if let Some(out) = out.for_human() {
         let t = theme::get();
         let draftiness = if draft { "draft " } else { "" };
@@ -987,6 +1018,29 @@ async fn publish_review_for_branch(
     )
     .await
     .map(|review| PublishReviewResult::Published(Box::new(review)))
+}
+
+/// Normalize and validate a `--base` override: accept a plain branch name or a full
+/// local or remote-tracking ref, and reject a base that names the review's own branch,
+/// which the forge would reject as an empty review.
+fn normalized_review_base(base: &str, source_branch: &str) -> anyhow::Result<String> {
+    let short = if let Some(branch) = base.strip_prefix("refs/heads/") {
+        branch
+    } else if let Some(remote) = base.strip_prefix("refs/remotes/") {
+        let Some((_, branch)) = remote.split_once('/') else {
+            anyhow::bail!("`--base` value '{base}' does not name a branch");
+        };
+        branch
+    } else {
+        base
+    };
+    if short.is_empty() {
+        anyhow::bail!("`--base` value '{base}' does not name a branch");
+    }
+    if short == source_branch {
+        anyhow::bail!("`--base` must differ from the review's own branch '{source_branch}'");
+    }
+    Ok(short.to_owned())
 }
 
 /// Get the default commit for the branch, if it has exactly one commit.
@@ -1320,6 +1374,45 @@ fn extract_valid_ids(selector: &str) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn review_base_override_accepts_plain_and_full_ref_names() {
+        assert_eq!(
+            normalized_review_base("denkhaus", "feature").unwrap(),
+            "denkhaus",
+            "a plain branch name passes through unchanged"
+        );
+        assert_eq!(
+            normalized_review_base("refs/heads/denkhaus", "feature").unwrap(),
+            "denkhaus",
+            "a local branch ref shortens to the branch name"
+        );
+        assert_eq!(
+            normalized_review_base("refs/remotes/origin/denkhaus", "feature").unwrap(),
+            "denkhaus",
+            "a remote-tracking ref shortens to the branch name"
+        );
+    }
+
+    #[test]
+    fn review_base_override_rejects_own_branch_and_malformed_values() {
+        assert!(
+            normalized_review_base("feature", "feature").is_err(),
+            "the base must not name the review's own branch"
+        );
+        assert!(
+            normalized_review_base("refs/heads/feature", "feature").is_err(),
+            "the base must not name the review's own branch through a ref prefix"
+        );
+        assert!(
+            normalized_review_base("refs/remotes/origin", "feature").is_err(),
+            "a remote-tracking ref without a branch is rejected"
+        );
+        assert!(
+            normalized_review_base("", "feature").is_err(),
+            "an empty base is rejected"
+        );
+    }
 
     #[test]
     fn worktree_reviews_are_selectable_by_branch_and_number() -> anyhow::Result<()> {
