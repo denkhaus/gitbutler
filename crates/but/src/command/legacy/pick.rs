@@ -233,6 +233,8 @@ fn resolve(
             default_lane,
             &merged,
             switch,
+            // A pick names its changes on the command line, so the multi-lane guard applies.
+            true,
         )
         .map_err(|err| match err {
             RouteCommitOperationError::NoStackToCommitTo => {

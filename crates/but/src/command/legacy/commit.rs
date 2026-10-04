@@ -242,6 +242,9 @@ fn resolve(
     } = args;
     // `--file` is a path-anchored selector for the same selection `CHANGES` names.
     changes.extend(file);
+    // A named selection (`CHANGES`, `--file`, `--patch`) routes with the multi-lane guard
+    // below; a bare commit keeps the tip default.
+    let explicit_selection = !changes.is_empty() || patch.is_some();
 
     if switch && !ctx.settings.feature_flags.single_branch {
         return Err(
@@ -348,6 +351,7 @@ fn resolve(
             default_lane,
             &merged,
             switch,
+            explicit_selection,
         )
         .map_err(|err| match err {
             RouteCommitOperationError::NoStackToCommitTo => {
@@ -699,6 +703,7 @@ pub fn route_commit_operation(
     default_lane: impl FnOnce() -> CliResult<ChangeSourceId>,
     merged: &MergedUpstream,
     switch: bool,
+    explicit_selection: bool,
 ) -> Result<CommitOperation, RouteCommitOperationError> {
     match target {
         CommitOperationTargetIsh::Above {
@@ -800,6 +805,32 @@ pub fn route_commit_operation(
                     },
                 )),
                 [stack] => {
+                    // A commit with an explicitly named selection defaults to the
+                    // tip lane of the one applied stack. With several lanes in it,
+                    // the tip may well be another writer's lane — in a shared
+                    // checkout the selection's author cannot tell — and committing
+                    // there is a silent misplacement: the tip lane's review carries
+                    // work it never made. Fail closed and name the lanes instead.
+                    // Committing everything uncommitted, or a TUI pick, keeps the
+                    // tip default: those flows have no named selection to protect,
+                    // and single-lane stacks keep the zero-flag flow either way.
+                    if explicit_selection && stack.segments.len() > 1 {
+                        let lanes = stack
+                            .segments
+                            .iter()
+                            .filter_map(|segment| segment.ref_info.as_ref())
+                            .map(|ref_info| ref_info.ref_name.shorten().to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        return Err(bad_input(format!(
+                            "{} lanes are applied ({lanes}); a bare commit would land on the topmost",
+                            stack.segments.len()
+                        ))
+                        .hint(
+                            "Pass --branch <name>, --above <name> or --below <name> to place the commit",
+                        )
+                        .into());
+                    }
                     let ref_info = stack
                         .segments
                         .first()

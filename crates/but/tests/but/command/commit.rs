@@ -26,6 +26,77 @@ Hint: Enable the feature with `but config feature single-branch enable`
 }
 
 #[test]
+fn bare_commit_fails_closed_when_several_lanes_are_applied() {
+    let env =
+        Sandbox::init_scenario_with_target_and_default_settings("one-stack-two-dependent-branches");
+    env.setup_metadata(&["A", "B"]);
+    env.file("new.txt", "content\n");
+
+    let diff = env
+        .but("--json diff")
+        .allow_json()
+        .output()
+        .expect("diff should succeed");
+    let diff: serde_json::Value =
+        serde_json::from_slice(&diff.stdout).expect("diff output should be JSON");
+    let change_id = diff["changes"][0]["id"]
+        .as_str()
+        .expect("the dirty file should have a CLI ID");
+
+    // The old default silently landed on B, the topmost lane.
+    env.but(format!("commit -m message {change_id}"))
+        .assert()
+        .failure()
+        .stdout_eq(snapbox::str![])
+        .stderr_eq(snapbox::str![[r#"
+Error: 2 lanes are applied (B, A); a bare commit would land on the topmost
+
+Hint: Pass --branch <name>, --above <name> or --below <name> to place the commit
+
+"#]]);
+
+    // An explicit target still works.
+    env.but(format!("commit -b A -m message {change_id}"))
+        .assert()
+        .success()
+        .stderr_eq(snapbox::str![]);
+}
+
+#[test]
+fn bare_commit_without_a_named_selection_keeps_the_tip_default() {
+    let env =
+        Sandbox::init_scenario_with_target_and_default_settings("one-stack-two-dependent-branches");
+    env.setup_metadata(&["A", "B"]);
+    env.file("new.txt", "content\n");
+
+    // Committing everything uncommitted is the flow right after `but branch new`: the tip
+    // lane is the one the operator just created, so it stays the default.
+    env.but("commit -m message")
+        .assert()
+        .success()
+        .stderr_eq(snapbox::str![]);
+    env.but("status")
+        .assert()
+        .success()
+        .stdout_eq(snapbox::str![[r#"
+╭┄ @ [uncommitted] (no changes)
+┊
+┊╭┄ g0 [B]
+┊●   qkm message
+┊●   wwm add B
+┊│
+┊├┄ h0 [A]
+┊●   tpm add A
+├╯
+┊
+┴ 0dc3733 (common base, main, origin/main) 2000-01-02 add M
+
+Hint: run `but help` for all commands
+
+"#]]);
+}
+
+#[test]
 fn rejects_unnamed_segment_as_target() {
     let env =
         Sandbox::init_scenario_with_target_and_default_settings("one-stack-anonymous-segment");
@@ -1960,6 +2031,7 @@ Examples:
   but commit -b <branch> -m "message"                    # commit onto a branch (created if needed)
   but commit -b <branch> -m "message" <file-or-hunk>...  # commit only the given changes
   but commit -m "message"                                # commit when only one stack is applied
+  but commit --patch <file> -m "message"                 # commit exactly the diff's hunks
 
 "#]]);
 }
@@ -3275,6 +3347,7 @@ Examples:
   but commit -b <branch> -m "message"                    # commit onto a branch (created if needed)
   but commit -b <branch> -m "message" <file-or-hunk>...  # commit only the given changes
   but commit -m "message"                                # commit when only one stack is applied
+  but commit --patch <file> -m "message"                 # commit exactly the diff's hunks
 
 "#]]);
 
