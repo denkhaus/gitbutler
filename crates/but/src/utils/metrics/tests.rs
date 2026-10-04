@@ -276,6 +276,7 @@ fn commit_extra_props_describe_targeting_and_selection_without_ids() {
                 .collect(),
             file: Vec::new(),
             hunks: false,
+            patch: None,
             allow_merged: Default::default(),
             switch: false,
         });

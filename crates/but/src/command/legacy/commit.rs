@@ -37,7 +37,7 @@ use crate::{
         diff_rendering,
         diff_specs::DiffSpecBuilder,
         merged_upstream::MergedUpstream,
-        rejection,
+        patch_selection, rejection,
         single_branch_mode::{
             HowToCreateStackedReference, HowToCreateUnstackedReference, SingleBranchMode,
         },
@@ -132,11 +132,24 @@ pub fn commit(
     args: Platform,
     invoked_from: &InvokedFrom,
 ) -> CliResult<(CommitOutcome, WorkspaceState)> {
+    // Read before anything else: a missing patch file or unreadable stdin is bad input, not a
+    // repository error.
+    let patch = args
+        .patch
+        .as_ref()
+        .map(|path| read_patch(path))
+        .transpose()?;
     if args.hunks {
         // A listing is the command's whole result: it is written here, and the command ends
         // instead of returning the commit outcome the dispatcher would print next. Bad input
         // returns above, so it still takes the regular error path.
-        list_hunks(ctx, out.output_channel(), &args, invoked_from)?;
+        list_hunks(
+            ctx,
+            out.output_channel(),
+            &args,
+            patch.as_deref(),
+            invoked_from,
+        )?;
         std::io::Write::flush(&mut std::io::stdout()).ok();
         std::process::exit(0);
     }
@@ -151,6 +164,7 @@ pub fn commit(
             guard,
             ctx,
             args,
+            patch,
             &mut out,
             &head_info,
             &id_map,
@@ -167,10 +181,40 @@ pub fn commit(
     )?)
 }
 
+/// Read a `--patch` argument: `-` is stdin, anything else a file path.
+fn read_patch(path: &std::path::Path) -> CliResult<Vec<u8>> {
+    if path == std::path::Path::new("-") {
+        let mut buf = Vec::new();
+        std::io::Read::read_to_end(&mut std::io::stdin(), &mut buf)
+            .context("Failed to read the patch from stdin")?;
+        Ok(buf)
+    } else {
+        std::fs::read(path)
+            .with_context(|| format!("Failed to read the patch file: {}", path.display()))
+            .map_err(Into::into)
+    }
+}
+
+/// `--patch`: select exactly the hunks the patch shows, matched against the current
+/// uncommitted changes of the checkout the command runs in.
+fn select_patch_hunks(
+    patch: Vec<u8>,
+    id_map: &IdMap,
+    invoked_from: &InvokedFrom,
+) -> CliResult<NonEmpty<UncommittedHunkOrFile>> {
+    let files = patch_selection::parse(&patch)?;
+    let source = invoked_from.managed_source(id_map)?;
+    let current = id_map.uncommitted_files_in(&source);
+    let selected = patch_selection::match_current_hunks(files, &current)?;
+    NonEmpty::from_vec(selected).ok_or_else(|| bad_input("the patch selects no hunks").into())
+}
+
+#[expect(clippy::too_many_arguments)]
 fn resolve(
     guard: RepoExclusiveGuard,
     ctx: &mut Context,
     args: Platform,
+    patch: Option<Vec<u8>>,
     out: &mut IntermediateChannel<'_>,
     head_info: &RefInfo,
     id_map: &IdMap,
@@ -192,6 +236,7 @@ fn resolve(
         mut changes,
         file,
         hunks: _,
+        patch: _,
         allow_merged,
         switch,
     } = args;
@@ -210,7 +255,13 @@ fn resolve(
 
     let target_ish = CommitOperationTargetIsh::resolve(branch, above, below)?;
 
-    let (guard, commit_selection) = if !changes.is_empty() {
+    let (guard, commit_selection) = if let Some(patch) = patch {
+        let selection = select_patch_hunks(patch, id_map, invoked_from)?;
+        (
+            guard,
+            CommitSelection::Changes(Box::new(UncommittedSelection::new(selection)?)),
+        )
+    } else if !changes.is_empty() {
         let changes = changes
             .into_iter()
             .map(|change| {
@@ -360,6 +411,7 @@ fn list_hunks(
     ctx: &mut Context,
     out: &mut OutputChannel,
     args: &Platform,
+    patch: Option<&[u8]>,
     invoked_from: &InvokedFrom,
 ) -> CliResult<()> {
     if out.is_json() {
@@ -375,6 +427,38 @@ fn list_hunks(
         let guard = ctx.shared_worktree_access();
         IdMap::new_from_context(ctx, guard.read_permission())?
     };
+
+    if let Some(patch) = patch {
+        // The patch listing previews the same selection a commit would take: exactly the
+        // matched hunks, with their current IDs.
+        let selected = select_patch_hunks(patch.to_vec(), &id_map, invoked_from)?;
+        let options = diff_rendering::Options {
+            skip_commit_header: true,
+            skip_line_stats: true,
+        };
+        let theme = theme::get();
+        let Some(human) = out.for_human_or_shell() else {
+            return Ok(());
+        };
+        diff_rendering::with_human_diff_writer(human, theme, |id_gen, writer| {
+            for hunk in selected {
+                diff_rendering::render_uncommitted_hunk(
+                    UncommittedHunkOrFile {
+                        id: hunk.id,
+                        hunks: hunk.hunks,
+                        is_entire_file: hunk.is_entire_file,
+                        source: hunk.source,
+                    },
+                    theme,
+                    id_gen,
+                    options,
+                    writer,
+                )?;
+            }
+            Ok(())
+        })?;
+        return Ok(());
+    }
 
     // `--file` extends the change selection, exactly like naming the path as `CHANGES`.
     let selection = args.changes.iter().chain(&args.file).collect::<Vec<_>>();

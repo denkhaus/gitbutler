@@ -115,13 +115,32 @@ pub struct Platform {
 
     /// List the hunk IDs of the selected changes without committing them.
     ///
-    /// The listing is the diff `but diff` would show for `CHANGES` and `--file`, with every
-    /// hunk's ID in its header; without either, it is every uncommitted hunk of the checkout.
-    /// Pass an ID from the listing to `but commit` to commit that hunk. Nothing is committed,
-    /// so message and targeting flags have no effect, and `--empty` and `--interactive` are
-    /// rejected.
+    /// The listing is the diff `but diff` would show for `CHANGES`, `--file` and `--patch`,
+    /// with every hunk's ID in its header; without either, it is every uncommitted hunk of the
+    /// checkout. Pass an ID from the listing to `but commit` to commit that hunk. Nothing is
+    /// committed, so message and targeting flags have no effect, and `--empty` and
+    /// `--interactive` are rejected.
     #[clap(long, conflicts_with_all = ["empty", "interactive"])]
     pub hunks: bool,
+
+    /// Commit exactly the hunks of this unified diff, matched byte-exactly against the
+    /// current uncommitted changes.
+    ///
+    /// `FILE` holds a unified diff as `git diff` writes it; `-` reads it from stdin. Every
+    /// hunk must still be present byte-identically — context lines included — among the named
+    /// file's current changes. Matching is by content, so line numbers may have shifted since
+    /// the patch was captured; a hunk that no longer matches is an error, never a
+    /// best-effort commit. This is how agents and automation safely select hunks in a
+    /// checkout shared with other writers, where short hunk IDs are only snapshot-stable.
+    /// Only text hunks can be selected; whole-file changes such as binaries still need
+    /// `CHANGES`.
+    #[clap(
+        long,
+        value_name = "FILE",
+        group = "changes_to_commit",
+        conflicts_with = "file"
+    )]
+    pub patch: Option<std::path::PathBuf>,
 
     #[clap(flatten)]
     #[allow(missing_docs)]
@@ -138,4 +157,5 @@ Examples:
   but commit -b <branch> -m \"message\"                    # commit onto a branch (created if needed)
   but commit -b <branch> -m \"message\" <file-or-hunk>...  # commit only the given changes
   but commit -m \"message\"                                # commit when only one stack is applied
+  but commit --patch <file> -m \"message\"                 # commit exactly the diff's hunks
 ";

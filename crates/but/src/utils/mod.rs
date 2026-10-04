@@ -16,6 +16,7 @@ mod object_id;
 pub use object_id::{get_change_id_for_commit, shorten_hex_object_id, shorten_object_id};
 
 mod pager;
+pub(crate) mod patch_selection;
 
 mod debug_as_type;
 pub(crate) use debug_as_type::DebugAsType;
