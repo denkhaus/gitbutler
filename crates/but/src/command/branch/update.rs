@@ -33,6 +33,24 @@ pub fn update(
     let branch_ref = resolve_local_branch(ctx, branch)?;
     let initial =
         branch::get_initial_branch_integration(ctx, branch_ref.as_ref(), Some(strategy.into()))?;
+    if initial.integration.steps.is_empty() {
+        // There is nothing to integrate: the branch is level with its upstream, or an earlier run
+        // already integrated it. Claiming an update here would be wrong, and failing worse.
+        // Non-human output falls through, where applying an empty plan reports the unchanged
+        // workspace.
+        if let Some(out) = out.for_human() {
+            let t = theme::get();
+            let upstream =
+                api_json::FullRefName::from(initial.divergence.upstream_ref_name.clone());
+            writeln!(
+                out,
+                "{} is already up to date with {}.",
+                t.local_branch.paint(branch_ref.shorten().to_string()),
+                t.remote_branch.paint(shorten_full_ref_name(&upstream))
+            )?;
+            return Ok(());
+        }
+    }
     let integration = if interactive {
         integration_from_editor(&initial)?
     } else {

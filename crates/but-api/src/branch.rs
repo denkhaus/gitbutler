@@ -1690,6 +1690,12 @@ pub fn apply_branch_integration(
 /// returned [`IntegrateBranchResult`] contains the post-operation workspace
 /// view. When `dry_run` is enabled, it returns a preview of the resulting
 /// workspace state and skips oplog persistence.
+///
+/// An `integration` without steps means there is nothing to integrate, which is
+/// the state of a branch that is level with its upstream - and of every run
+/// after the first one that already integrated it. That is a legitimate
+/// outcome, not a failure: it reports the unchanged workspace and records no
+/// oplog entry, because nothing is mutated.
 pub fn apply_branch_integration_with_perm(
     ctx: &mut but_ctx::Context,
     branch: &gix::refs::FullNameRef,
@@ -1697,6 +1703,9 @@ pub fn apply_branch_integration_with_perm(
     dry_run: DryRun,
     perm: &mut RepoExclusive,
 ) -> anyhow::Result<IntegrateBranchResult> {
+    if integration.steps.is_empty() {
+        return current_branch_integration(ctx, perm);
+    }
     branch_mutation_with_snapshot(
         ctx,
         perm,
@@ -1719,6 +1728,27 @@ pub fn apply_branch_integration_with_perm(
             })
         },
     )
+}
+
+/// Report the current workspace, for an integration that has nothing to apply.
+///
+/// A preview of "nothing to do" and the result of doing nothing are the same
+/// state, so this ignores `dry_run` and never writes.
+fn current_branch_integration(
+    ctx: &mut but_ctx::Context,
+    perm: &mut RepoExclusive,
+) -> anyhow::Result<IntegrateBranchResult> {
+    let mut meta = ctx.meta()?;
+    let (repo, ws, mut db) = ctx.workspace_mut_and_db_mut_with_perm(perm)?;
+    Ok(IntegrateBranchResult {
+        workspace: WorkspaceState::from_workspace_with_db(
+            &ws,
+            &mut meta,
+            &repo,
+            BTreeMap::new(),
+            &mut db,
+        )?,
+    })
 }
 
 /// Moves a branch using the behavior described by [`move_branch_with_perm()`].

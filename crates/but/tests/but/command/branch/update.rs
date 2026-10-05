@@ -553,3 +553,63 @@ Error: Branch 'refs/heads/A' has no tracking branch
 
 "#]]);
 }
+
+#[test]
+fn integrate_level_branch_is_a_noop_with_a_clear_message() {
+    let env = Sandbox::init_scenario_with_target_and_default_settings("branch-integrate-level");
+    let before_log = env.git_log();
+
+    env.but("branch update A")
+        .assert()
+        .success()
+        .stderr_eq(str![])
+        .stdout_eq(str![[r#"
+A is already up to date with origin/A.
+
+"#]]);
+
+    assert_eq!(
+        env.git_log(),
+        before_log,
+        "an integration with nothing to do must not rewrite refs"
+    );
+
+    env.but("branch update A")
+        .assert()
+        .success()
+        .stderr_eq(str![])
+        .stdout_eq(str![[r#"
+A is already up to date with origin/A.
+
+"#]]);
+}
+
+#[test]
+fn integrate_level_branch_reports_the_unchanged_workspace_as_json() {
+    let env = Sandbox::init_scenario_with_target_and_default_settings("branch-integrate-level");
+    let before_status = pretty_status(&env);
+
+    let output = env
+        .but("--json branch update A")
+        .allow_json()
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("machine output is JSON");
+    assert!(
+        value.get("workspace").is_some(),
+        "an integration with nothing to do reports the workspace it left alone: {value}"
+    );
+
+    assert_eq!(
+        pretty_status(&env),
+        before_status,
+        "an integration with nothing to do must not change the workspace"
+    );
+}
