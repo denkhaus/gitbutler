@@ -33,25 +33,11 @@ pub fn update(
     let branch_ref = resolve_local_branch(ctx, branch)?;
     let initial =
         branch::get_initial_branch_integration(ctx, branch_ref.as_ref(), Some(strategy.into()))?;
-    if initial.integration.steps.is_empty() {
-        // There is nothing to integrate: the branch is level with its upstream, or an earlier run
-        // already integrated it. Claiming an update here would be wrong, and failing worse.
-        // Non-human output falls through, where applying an empty plan reports the unchanged
-        // workspace.
-        if let Some(out) = out.for_human() {
-            let t = theme::get();
-            let upstream =
-                api_json::FullRefName::from(initial.divergence.upstream_ref_name.clone());
-            writeln!(
-                out,
-                "{} is already up to date with {}.",
-                t.local_branch.paint(branch_ref.shorten().to_string()),
-                t.remote_branch.paint(shorten_full_ref_name(&upstream))
-            )?;
-            return Ok(());
-        }
-    }
-    let integration = if interactive {
+    // An empty plan means there is nothing to integrate: the branch is level with its upstream, or
+    // an earlier run already integrated it. Report that instead of claiming an update. The call
+    // below still happens, because it also refreshes a workspace that lags behind the branch tip.
+    let nothing_to_integrate = initial.integration.steps.is_empty();
+    let integration = if interactive && !nothing_to_integrate {
         integration_from_editor(&initial)?
     } else {
         workspace_integration_to_json(initial.integration)
@@ -69,6 +55,7 @@ pub fn update(
         dry_run,
         verbose,
         result,
+        nothing_to_integrate,
         out,
     )
 }
@@ -188,10 +175,20 @@ fn output_apply_result(
     dry_run: bool,
     verbose: bool,
     result: IntegrateBranchResult,
+    nothing_to_integrate: bool,
     out: &mut OutputChannel,
 ) -> anyhow::Result<()> {
     if let Some(out) = out.for_human() {
-        if dry_run {
+        if nothing_to_integrate {
+            let t = theme::get();
+            let upstream = api_json::FullRefName::from(divergence.upstream_ref_name.clone());
+            writeln!(
+                out,
+                "{} is already up to date with {}.",
+                t.local_branch.paint(branch_ref.shorten().to_string()),
+                t.remote_branch.paint(shorten_full_ref_name(&upstream))
+            )?;
+        } else if dry_run {
             write!(
                 out,
                 "{}",

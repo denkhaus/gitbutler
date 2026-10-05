@@ -1704,7 +1704,29 @@ pub fn apply_branch_integration_with_perm(
     perm: &mut RepoExclusive,
 ) -> anyhow::Result<IntegrateBranchResult> {
     if integration.steps.is_empty() {
-        return current_branch_integration(ctx, perm);
+        // Nothing to integrate, but the branch tip can still be missing from the workspace: a lane
+        // ref moved outside of GitButler - a plain `git fetch origin <lane>:<lane>` - leaves the
+        // workspace commit and the worktree behind. Reporting "nothing to do" in that state would
+        // hide exactly what the caller wants to get out of, so refresh the workspace for it.
+        if dry_run.into() || !workspace_lacks_branch_tip(ctx, branch, perm)? {
+            return current_branch_integration(ctx, perm);
+        }
+        return branch_mutation_with_snapshot(
+            ctx,
+            perm,
+            OperationKind::GenericBranchUpdate,
+            dry_run,
+            |ctx, perm| {
+                let outcome = apply_only_with_perm(ctx, branch, perm)?;
+                if !outcome.conflicting_stacks.is_empty() {
+                    bail!(
+                        "Cannot refresh the workspace for '{}': applying it conflicts with existing stacks",
+                        branch.shorten()
+                    );
+                }
+                current_branch_integration(ctx, perm)
+            },
+        );
     }
     branch_mutation_with_snapshot(
         ctx,
@@ -1728,6 +1750,31 @@ pub fn apply_branch_integration_with_perm(
             })
         },
     )
+}
+
+/// Return `true` if `branch`'s tip is not part of the commit the workspace is checked out at.
+///
+/// An applied branch has its tip in `HEAD`'s history. A lane ref that a plain `git` command moved
+/// outside of GitButler does not, and the worktree then still reflects the pre-move content.
+fn workspace_lacks_branch_tip(
+    ctx: &but_ctx::Context,
+    branch: &gix::refs::FullNameRef,
+    perm: &mut RepoExclusive,
+) -> anyhow::Result<bool> {
+    let (repo, _ws, _db) = ctx.workspace_and_db_with_perm(perm.read_permission())?;
+    let Some(branch_id) = repo
+        .try_find_reference(branch)?
+        .map(|mut reference| reference.peel_to_id())
+        .transpose()?
+    else {
+        return Ok(false);
+    };
+    let Ok(head_id) = repo.head_id() else {
+        return Ok(false);
+    };
+    Ok(repo
+        .merge_base(head_id.detach(), branch_id.detach())
+        .is_ok_and(|merge_base| merge_base.detach() != branch_id.detach()))
 }
 
 /// Report the current workspace, for an integration that has nothing to apply.

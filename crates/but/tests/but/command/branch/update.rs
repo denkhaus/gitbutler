@@ -643,6 +643,37 @@ A is already up to date with origin/A.
 }
 
 #[test]
+fn integrate_refreshes_a_workspace_left_behind_by_a_plain_git_fast_forward() {
+    let env =
+        Sandbox::init_scenario_with_target_and_default_settings("branch-integrate-stale-worktree");
+    env.setup_metadata(&["A"]);
+
+    assert_eq!(
+        env.invoke_git("rev-parse refs/heads/A"),
+        env.invoke_git("rev-parse refs/remotes/origin/A"),
+        "the branch is level with its remote"
+    );
+    assert!(
+        !env.projects_root().join("only-on-plain-git").exists(),
+        "the file is in the branch ref, but the worktree lags behind it"
+    );
+
+    env.but("branch update A")
+        .assert()
+        .success()
+        .stderr_eq(str![])
+        .stdout_eq(str![[r#"
+A is already up to date with origin/A.
+
+"#]]);
+
+    assert!(
+        env.projects_root().join("only-on-plain-git").exists(),
+        "the workspace was refreshed to the branch tip, so the file is materialized"
+    );
+}
+
+#[test]
 fn integrate_level_branch_reports_the_unchanged_workspace_as_json() {
     let env = Sandbox::init_scenario_with_target_and_default_settings("branch-integrate-level");
     let before_status = pretty_status(&env);
