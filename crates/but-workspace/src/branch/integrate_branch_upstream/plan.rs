@@ -405,7 +405,7 @@ fn integration_steps_to_segment_steps_for_editor<M: RefMetadata>(
     for step in steps.iter().rev() {
         match step {
             PreparedIntegrationStep::Pick { commit_id, .. } => {
-                out.push(existing_or_new_pick_step(editor, *commit_id)?);
+                out.push(existing_or_new_pick_step(editor, ref_name, *commit_id)?);
             }
             PreparedIntegrationStep::Merge { commit_id } => {
                 let mut merge_commit = editor.empty_commit()?;
@@ -450,6 +450,7 @@ fn integration_steps_to_segment_steps_for_editor<M: RefMetadata>(
 /// selectable in the editor.
 fn existing_or_new_pick_step<M: RefMetadata>(
     editor: &mut Editor<'_, '_, M>,
+    ref_name: &gix::refs::FullNameRef,
     commit_id: gix::ObjectId,
 ) -> Result<Step> {
     if let Some(existing) = editor.try_select_commit(commit_id) {
@@ -468,14 +469,64 @@ fn existing_or_new_pick_step<M: RefMetadata>(
         // cherry-picked. Reused upstream commits live in immutable segments
         // (they aren't reachable from HEAD), so force them mutable here.
         let mut step = editor.lookup_step(existing)?;
+        let mut changed = false;
         if let Step::Pick(pick) = &mut step
             && !pick.mutable
         {
             pick.mutable = true;
+            changed = true;
+        }
+        changed |= preserve_fast_forwarded_merge_parents(editor, ref_name, &mut step)?;
+        if changed {
             editor.replace(existing, step.clone())?;
         }
         return Ok(step);
     }
 
-    Ok(Step::new_pick(commit_id))
+    let mut step = Step::new_pick(commit_id);
+    preserve_fast_forwarded_merge_parents(editor, ref_name, &mut step)?;
+    Ok(step)
+}
+
+/// Keep the parents of `step` when it picks a merge commit the branch fast-forwards to.
+///
+/// A merge commit carries no change of its own relative to its first parent, so re-parenting it
+/// onto that parent - what the integration normally does to any picked commit - turns it into an
+/// empty commit and silently drops the merged side. A branch that is only behind such a commit
+/// takes it as it is, so its parents are preserved here and the very commit the remote has is
+/// materialized.
+///
+/// Returns whether `step` was changed.
+fn preserve_fast_forwarded_merge_parents<M: RefMetadata>(
+    editor: &mut Editor<'_, '_, M>,
+    ref_name: &gix::refs::FullNameRef,
+    step: &mut Step,
+) -> Result<bool> {
+    let Step::Pick(pick) = step else {
+        return Ok(false);
+    };
+    let commit = editor.find_commit(pick.id)?;
+    if commit.inner.parents.len() < 2 {
+        return Ok(false);
+    }
+    let Some(local_tip) = editor
+        .repo()
+        .try_find_reference(ref_name)?
+        .map(|mut reference| reference.peel_to_id())
+        .transpose()?
+    else {
+        return Ok(false);
+    };
+    // Only a fast-forward takes the commit verbatim. A branch that has local commits of its own
+    // rebuilds around it, and preserving parents there is not known to be sound.
+    let local_tip = local_tip.detach();
+    if !editor
+        .repo()
+        .merge_base(local_tip, pick.id)
+        .is_ok_and(|merge_base| merge_base.detach() == local_tip)
+    {
+        return Ok(false);
+    }
+    pick.preserved_parents = Some(commit.inner.parents.iter().copied().collect());
+    Ok(true)
 }

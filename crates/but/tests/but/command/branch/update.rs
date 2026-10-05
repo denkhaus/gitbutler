@@ -585,6 +585,64 @@ A is already up to date with origin/A.
 }
 
 #[test]
+fn integrate_takes_a_remote_merge_commit_verbatim() {
+    let env =
+        Sandbox::init_scenario_with_target_and_default_settings("branch-integrate-merge-commit");
+
+    let remote_tip = env.invoke_git("rev-parse refs/remotes/origin/A");
+    assert_ne!(
+        env.invoke_git("rev-parse refs/heads/A"),
+        remote_tip,
+        "the lane starts behind the remote's merge commit"
+    );
+    assert_eq!(
+        env.invoke_git("rev-list --count refs/heads/A..refs/remotes/origin/A"),
+        "2",
+        "the divergence is the merge commit and its merged side"
+    );
+    assert_eq!(
+        env.invoke_git("rev-list --parents -n 1 refs/remotes/origin/A")
+            .split_whitespace()
+            .count(),
+        3,
+        "the remote tip is a merge commit"
+    );
+
+    env.but("branch update A")
+        .assert()
+        .success()
+        .stderr_eq(str![])
+        .stdout_eq(str![[r#"
+Updated branch A.
+
+"#]]);
+
+    assert_eq!(
+        env.invoke_git("rev-parse refs/heads/A"),
+        remote_tip,
+        "the lane takes the remote's merge commit itself, merged side included"
+    );
+    assert_eq!(
+        env.invoke_git("rev-list --count HEAD..refs/remotes/origin/A"),
+        "0",
+        "the workspace contains the remote tip"
+    );
+    assert!(
+        env.read_file("merged-side").is_ok(),
+        "the merged side is materialized in the worktree"
+    );
+
+    env.but("branch update A")
+        .assert()
+        .success()
+        .stderr_eq(str![])
+        .stdout_eq(str![[r#"
+A is already up to date with origin/A.
+
+"#]]);
+}
+
+#[test]
 fn integrate_level_branch_reports_the_unchanged_workspace_as_json() {
     let env = Sandbox::init_scenario_with_target_and_default_settings("branch-integrate-level");
     let before_status = pretty_status(&env);
