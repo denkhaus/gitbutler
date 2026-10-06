@@ -192,6 +192,13 @@ pub fn integrate_branch_with_steps<'ws, 'meta, M: RefMetadata>(
     })
     .collect::<Result<Vec<_>>>()?;
 
+    // The rebuilt chain connects its parent-most step to exactly the parents above; when that is a
+    // single parent, it is also the placement parent picks there re-parent onto.
+    let parent_most_placement = match parents_to_reconnect.as_slice() {
+        [(selector, _)] => editor.lookup_pick(*selector).ok(),
+        _ => None,
+    };
+
     // Step 3: Disconnect the segment, isolating it so that we can freely manipulate it.
     editor.disconnect_segment_from(
         segment_delimiter,
@@ -201,8 +208,12 @@ pub fn integrate_branch_with_steps<'ws, 'meta, M: RefMetadata>(
     )?;
 
     // Step 4: Based on the prepared steps, we rebuild the chain.
-    let new_segment_delimiter =
-        integration_steps_into_segment_nodes(&mut editor, ref_name, &prepared_steps)?;
+    let new_segment_delimiter = integration_steps_into_segment_nodes(
+        &mut editor,
+        ref_name,
+        &prepared_steps,
+        parent_most_placement,
+    )?;
     // Step 5: Once we have our new chain, we reconnect it to the original children and parents.
     connect_segment_to_edges(
         &mut editor,

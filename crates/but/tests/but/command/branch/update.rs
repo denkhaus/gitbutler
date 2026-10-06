@@ -674,6 +674,76 @@ A is already up to date with origin/A.
 }
 
 #[test]
+fn integrate_takes_a_remote_merge_commit_verbatim_when_diverged() {
+    let env = Sandbox::init_scenario_with_target_and_default_settings(
+        "branch-integrate-diverged-merge-commit",
+    );
+
+    assert_eq!(
+        env.invoke_git("rev-list --count refs/heads/A..refs/remotes/origin/A"),
+        "2",
+        "the lane is behind the remote's merge commit and its merged side"
+    );
+    assert_eq!(
+        env.invoke_git("rev-list --count refs/remotes/origin/A..refs/heads/A"),
+        "1",
+        "the lane carries one local commit the remote does not have"
+    );
+    assert_eq!(
+        env.invoke_git("rev-list --parents -n 1 refs/remotes/origin/A")
+            .split_whitespace()
+            .count(),
+        3,
+        "the remote tip is a merge commit"
+    );
+
+    env.but("branch update A")
+        .assert()
+        .success()
+        .stderr_eq(str![])
+        .stdout_eq(str![[r#"
+Updated branch A.
+
+"#]]);
+
+    assert_eq!(
+        env.invoke_git("rev-list --count refs/heads/A..refs/remotes/origin/A"),
+        "0",
+        "the remote's merge commit is part of the lane, so the lane is not behind anymore"
+    );
+    assert!(
+        env.read_file("merged-side").is_ok(),
+        "the merged side is materialized in the worktree"
+    );
+    assert!(
+        env.read_file("only-on-local").is_ok(),
+        "the local commit stays materialized in the worktree"
+    );
+
+    // A second run is a no-op: like any lane that is only ahead of its remote, the update
+    // rebuilds the local commit in place, stacks nothing, and stays level with the remote.
+    let lane_tip = env.invoke_git("rev-parse refs/heads/A");
+    env.but("branch update A")
+        .assert()
+        .success()
+        .stderr_eq(str![])
+        .stdout_eq(str![[r#"
+Updated branch A.
+
+"#]]);
+    assert_eq!(
+        env.invoke_git("rev-parse refs/heads/A"),
+        lane_tip,
+        "the second run stacks no further commits"
+    );
+    assert_eq!(
+        env.invoke_git("rev-list --count refs/heads/A..refs/remotes/origin/A"),
+        "0",
+        "the lane stays level with the remote"
+    );
+}
+
+#[test]
 fn integrate_level_branch_reports_the_unchanged_workspace_as_json() {
     let env = Sandbox::init_scenario_with_target_and_default_settings("branch-integrate-level");
     let before_status = pretty_status(&env);
