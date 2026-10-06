@@ -354,10 +354,16 @@ pub(crate) fn integration_steps_into_segment_nodes<M: RefMetadata>(
     editor: &mut Editor<'_, '_, M>,
     ref_name: &gix::refs::FullNameRef,
     steps: &[PreparedIntegrationStep],
+    parent_most_placement: Option<gix::ObjectId>,
 ) -> Result<SegmentDelimiter<Selector, Selector>> {
     // Step 1: We interpret the integration steps and transform them into graph steps disconnected from their parents.
     // We disconnect them in order to be able to allow for reordering.
-    let segment_steps = integration_steps_to_segment_steps_for_editor(editor, ref_name, steps)?;
+    let segment_steps = integration_steps_to_segment_steps_for_editor(
+        editor,
+        ref_name,
+        steps,
+        parent_most_placement,
+    )?;
 
     // Step 2. We build the new local branch out of the steps.
     // We start by disconnecting all the parents of the local branch reference step, as we will connect it to the new
@@ -393,19 +399,39 @@ pub(crate) fn integration_steps_into_segment_nodes<M: RefMetadata>(
 ///
 /// `steps` is the prepared integration plan in execution order.
 ///
+/// `parent_most_placement` is the single retained parent the rebuilt segment connects to,
+/// if there is exactly one. It is the commit the parent-most plan step is placed on.
+///
 /// Returns the graph steps to insert, starting with a reference step and then
 /// the parent chain steps in insertion order.
 fn integration_steps_to_segment_steps_for_editor<M: RefMetadata>(
     editor: &mut Editor<'_, '_, M>,
     ref_name: &gix::refs::FullNameRef,
     steps: &[PreparedIntegrationStep],
+    parent_most_placement: Option<gix::ObjectId>,
 ) -> Result<Vec<Step>> {
     let mut out = vec![Step::new_reference(ref_name.to_owned())];
 
-    for step in steps.iter().rev() {
+    for (index, step) in steps.iter().enumerate().rev() {
         match step {
             PreparedIntegrationStep::Pick { commit_id, .. } => {
-                out.push(existing_or_new_pick_step(editor, ref_name, *commit_id)?);
+                // The commit the rebuilt chain places this pick on: the next-older plan step,
+                // or the retained parent below the rebuilt segment for the parent-most step.
+                // A merge step materializes a fresh commit, so nothing can be placed on the
+                // commit it plans around.
+                let placement_parent = if index == 0 {
+                    parent_most_placement
+                } else {
+                    match steps.get(index - 1) {
+                        Some(PreparedIntegrationStep::Pick { commit_id, .. }) => Some(*commit_id),
+                        Some(PreparedIntegrationStep::Merge { .. }) | None => None,
+                    }
+                };
+                out.push(existing_or_new_pick_step(
+                    editor,
+                    *commit_id,
+                    placement_parent,
+                )?);
             }
             PreparedIntegrationStep::Merge { commit_id } => {
                 let mut merge_commit = editor.empty_commit()?;
@@ -450,8 +476,8 @@ fn integration_steps_to_segment_steps_for_editor<M: RefMetadata>(
 /// selectable in the editor.
 fn existing_or_new_pick_step<M: RefMetadata>(
     editor: &mut Editor<'_, '_, M>,
-    ref_name: &gix::refs::FullNameRef,
     commit_id: gix::ObjectId,
+    placement_parent: Option<gix::ObjectId>,
 ) -> Result<Step> {
     if let Some(existing) = editor.try_select_commit(commit_id) {
         let parents_to_disconnect = determine_parent_selector(editor, existing)?;
@@ -476,7 +502,8 @@ fn existing_or_new_pick_step<M: RefMetadata>(
             pick.mutable = true;
             changed = true;
         }
-        changed |= preserve_fast_forwarded_merge_parents(editor, ref_name, &mut step)?;
+        changed |=
+            preserve_merge_parents_at_first_parent_placement(editor, &mut step, placement_parent)?;
         if changed {
             editor.replace(existing, step.clone())?;
         }
@@ -484,23 +511,26 @@ fn existing_or_new_pick_step<M: RefMetadata>(
     }
 
     let mut step = Step::new_pick(commit_id);
-    preserve_fast_forwarded_merge_parents(editor, ref_name, &mut step)?;
+    preserve_merge_parents_at_first_parent_placement(editor, &mut step, placement_parent)?;
     Ok(step)
 }
 
-/// Keep the parents of `step` when it picks a merge commit the branch fast-forwards to.
+/// Keep the parents of `step` when the rebuilt chain places it on its own first parent.
 ///
 /// A merge commit carries no change of its own relative to its first parent, so re-parenting it
 /// onto that parent - what the integration normally does to any picked commit - turns it into an
-/// empty commit and silently drops the merged side. A branch that is only behind such a commit
-/// takes it as it is, so its parents are preserved here and the very commit the remote has is
-/// materialized.
+/// empty commit and silently drops the merged side. When the chain places the pick exactly on the
+/// commit that is its first parent, keeping the commit's own parents materializes the very commit
+/// the remote has, merged side included, without rewiring anything else: a branch that is only
+/// behind takes the merge verbatim, and so does a diverged branch that rebuilds its local commits
+/// on top of it. Anywhere else the rebuild is genuinely new history, and preserving parents there
+/// is not known to be sound, so the pick stays re-parented.
 ///
 /// Returns whether `step` was changed.
-fn preserve_fast_forwarded_merge_parents<M: RefMetadata>(
+fn preserve_merge_parents_at_first_parent_placement<M: RefMetadata>(
     editor: &mut Editor<'_, '_, M>,
-    ref_name: &gix::refs::FullNameRef,
     step: &mut Step,
+    placement_parent: Option<gix::ObjectId>,
 ) -> Result<bool> {
     let Step::Pick(pick) = step else {
         return Ok(false);
@@ -509,22 +539,7 @@ fn preserve_fast_forwarded_merge_parents<M: RefMetadata>(
     if commit.inner.parents.len() < 2 {
         return Ok(false);
     }
-    let Some(local_tip) = editor
-        .repo()
-        .try_find_reference(ref_name)?
-        .map(|mut reference| reference.peel_to_id())
-        .transpose()?
-    else {
-        return Ok(false);
-    };
-    // Only a fast-forward takes the commit verbatim. A branch that has local commits of its own
-    // rebuilds around it, and preserving parents there is not known to be sound.
-    let local_tip = local_tip.detach();
-    if !editor
-        .repo()
-        .merge_base(local_tip, pick.id)
-        .is_ok_and(|merge_base| merge_base.detach() == local_tip)
-    {
+    if commit.inner.parents.first().copied() != placement_parent {
         return Ok(false);
     }
     pick.preserved_parents = Some(commit.inner.parents.iter().copied().collect());
