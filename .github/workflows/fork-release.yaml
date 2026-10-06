@@ -31,7 +31,9 @@ on:
         type: string
 
 permissions:
-  contents: write
+  # Read-only workflow default; only the release job escalates to write
+  # (zizmor: excessive-permissions).
+  contents: read
 
 jobs:
   resolve:
@@ -43,9 +45,13 @@ jobs:
     steps:
       - name: Resolve tag (dispatch input or pushed ref)
         id: tag
+        env:
+          # env-indirection instead of inline ${{ }} in run (zizmor: template-injection)
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            tag="$INPUT_TAG"
           else
             tag="${GITHUB_REF_NAME}"
           fi
@@ -60,11 +66,14 @@ jobs:
           persist-credentials: false
       - name: Derive version
         id: resolve
+        env:
+          # env-indirection instead of inline ${{ }} in run (zizmor: template-injection)
+          TAG: ${{ steps.tag.outputs.tag }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          tag="${{ steps.tag.outputs.tag }}"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
             echo "draft=true" >> "$GITHUB_OUTPUT"
           else
             echo "draft=false" >> "$GITHUB_OUTPUT"
@@ -102,6 +111,12 @@ jobs:
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: but-fork-release-${{ matrix.target }}
+          # No effective caching in release builds (zizmor: cache-poisoning):
+          # `save-if: false` disables the post-save step (the poisoning write),
+          # `lookup-only: true` additionally never downloads anything -- release
+          # builds stay hermetic cold builds from the locked Cargo.lock.
+          lookup-only: true
+          save-if: false
       - name: Build but CLI (release, locked)
         run: cargo build --release --locked -p but --features packaged-but-distribution
       - name: "Strict guard: binary --version reports the tag version"
@@ -129,6 +144,9 @@ jobs:
   release:
     needs: [resolve, build]
     runs-on: ubuntu-latest
+    permissions:
+      # Only this job creates/updates the GitHub release (zizmor: excessive-permissions).
+      contents: write
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
