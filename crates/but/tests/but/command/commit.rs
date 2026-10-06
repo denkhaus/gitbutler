@@ -595,6 +595,36 @@ fn commit_json_status_after_includes_committed_files() {
 }
 
 #[test]
+fn commit_patch_selects_an_addition_from_a_fused_hunk() {
+    let env = Sandbox::init_scenario_with_target_and_default_settings("tracker-fused-append");
+    env.setup_metadata(&["A"]);
+
+    // Two writers append adjacent rows; their additions fuse into one hunk.
+    env.file("log.jsonl", "seq 19\nseq 20\nseq 21\nseq 22\n");
+
+    // The patch one writer captured when only its own row was appended.
+    env.file(
+        "writer-a.patch",
+        "--- a/log.jsonl\n+++ b/log.jsonl\n@@ -1,2 +1,3 @@\n seq 19\n seq 20\n+seq 21\n",
+    );
+
+    env.but("commit --patch writer-a.patch -m 'add seq 21 only'")
+        .assert()
+        .success();
+
+    assert_eq!(
+        env.invoke_git("show HEAD:log.jsonl"),
+        "seq 19\nseq 20\nseq 21",
+        "the commit carries exactly the writer's row"
+    );
+    assert!(
+        env.read_file("log.jsonl")
+            .is_ok_and(|content| content.contains("seq 22")),
+        "the neighbour's row stays in the worktree"
+    );
+}
+
+#[test]
 fn no_args_single_head_message_from_editor() {
     let env = Sandbox::init_scenario_with_target_and_default_settings("one-stack");
     env.setup_metadata(&["A"]);
