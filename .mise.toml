@@ -6,7 +6,7 @@
 "aqua:nushell/nushell" = { version = "0.115.0", exe = "nu" }
 # Seeds — this repo's own issue tracker (`.seeds/`). In-house Rust CLI;
 # sd-0.5.15 store read+write compatible. Exposes `seeds` on PATH.
-"cargo:seeds" = "0.6.0"
+"cargo:seeds" = "0.8.0"
 # Mulch — structured expertise management (`.mulch/`). npm CLI (`ml`).
 "npm:@os-eco/mulch-cli" = "0.10.7"
 
